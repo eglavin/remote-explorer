@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"remote-explorer/internal/fsvc"
 	"remote-explorer/internal/safepath"
@@ -39,7 +40,12 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, a.info.MaxUpload)
+	rc := http.NewResponseController(w)
+	r.Body = &idleTimeoutBody{
+		ReadCloser: http.MaxBytesReader(w, r.Body, a.info.MaxUpload),
+		rc:         rc,
+		idle:       a.uploadIdle,
+	}
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, r, fmt.Errorf("%w: %w", errNotMultipart, err))
@@ -67,6 +73,11 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 			part.Close()
 			continue
 		}
+		if up.Count() >= a.info.MaxFiles {
+			part.Close()
+			writeError(w, r, fmt.Errorf("%w: more than %d", errTooManyFiles, a.info.MaxFiles))
+			return
+		}
 		err = up.Add(name, part)
 		part.Close()
 		if err != nil {
@@ -74,6 +85,9 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The body is fully read. A deadline left behind would expire while a
+	// slow Commit runs and make net/http treat the connection as broken.
+	_ = rc.SetReadDeadline(time.Time{})
 	if up.Count() == 0 {
 		writeError(w, r, errNoFiles)
 		return
@@ -115,6 +129,25 @@ func boolParam(q url.Values, key string) (bool, error) {
 		return false, fmt.Errorf("%w: %s=%q", errBadQuery, key, v)
 	}
 	return b, nil
+}
+
+// DefaultUploadIdleTimeout is how long an upload may go without receiving
+// any bytes. Without it, a stalled client would hold its connection and
+// temporary files for as long as TCP takes to notice, or forever.
+const DefaultUploadIdleTimeout = time.Minute
+
+// idleTimeoutBody pushes the connection's read deadline forward before each
+// read, so slow but steady uploads of any size still succeed.
+type idleTimeoutBody struct {
+	io.ReadCloser
+	rc   *http.ResponseController
+	idle time.Duration
+}
+
+func (b *idleTimeoutBody) Read(p []byte) (int, error) {
+	// Fails only where deadlines are unsupported, such as in tests.
+	_ = b.rc.SetReadDeadline(time.Now().Add(b.idle))
+	return b.ReadCloser.Read(p)
 }
 
 func requestID(r *http.Request) string {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"remote-explorer/internal/extfilter"
 	"remote-explorer/internal/fsvc"
@@ -28,6 +29,7 @@ type testConfig struct {
 	visible, upload extfilter.Set
 	info            Info
 	allowedHosts    []string
+	uploadIdle      time.Duration
 }
 
 // newTestServer serves a tree of {a.mp3, b.txt, sub/c.mp3} read-only with no extension filter.
@@ -70,7 +72,8 @@ func newConfiguredTestServer(t *testing.T, cfg testConfig) *testServer {
 		Info:    cfg.info,
 		Token:   cfg.token,
 		// httptest.NewRequest sends "Host: example.com".
-		AllowedHosts: append([]string{"example.com"}, cfg.allowedHosts...),
+		AllowedHosts:      append([]string{"example.com"}, cfg.allowedHosts...),
+		UploadIdleTimeout: cfg.uploadIdle,
 	})
 	return &testServer{handler: h, logs: logs, dir: dir}
 }
@@ -260,7 +263,7 @@ func TestInfo(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d", rr.Code)
 	}
-	want := `{"writable":false,"overwrite":false,"visibleExtensions":[],"uploadExtensions":[],"maxUpload":0}`
+	want := `{"writable":false,"overwrite":false,"visibleExtensions":[],"uploadExtensions":[],"maxUpload":0,"maxFiles":0}`
 	if got := strings.TrimSpace(rr.Body.String()); got != want {
 		t.Errorf("body = %s, want %s", got, want)
 	}

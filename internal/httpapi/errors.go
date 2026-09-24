@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"os"
 
 	"remote-explorer/internal/fsvc"
 	"remote-explorer/internal/safepath"
@@ -19,6 +20,7 @@ var (
 	errBadQuery          = errors.New("invalid query parameter")
 	errCrossOrigin       = errors.New("cross-origin request from a browser")
 	errHostNotAllowed    = errors.New("host header not allowed")
+	errTooManyFiles      = errors.New("too many files in upload")
 )
 
 type errorBody struct {
@@ -42,6 +44,10 @@ func classify(err error) (int, errorBody) {
 		return http.StatusForbidden, errorBody{Error: "host not allowed; see --allow-host", Code: "host_not_allowed"}
 	case errors.As(err, &tooLarge):
 		return http.StatusRequestEntityTooLarge, errorBody{Error: "upload exceeds the size limit", Code: "too_large"}
+	case errors.Is(err, errTooManyFiles):
+		return http.StatusRequestEntityTooLarge, errorBody{Error: "upload has more files than the server allows", Code: "too_many_files"}
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		return http.StatusRequestTimeout, errorBody{Error: "upload stalled", Code: "timeout"}
 	case errors.As(err, &extErr):
 		return http.StatusUnsupportedMediaType, errorBody{Error: "extension not allowed", Code: "ext_not_allowed", Allowed: extErr.Allowed}
 	case errors.Is(err, safepath.ErrEscape):

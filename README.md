@@ -154,6 +154,7 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--write` | off | Enable uploads. Without it the server is read-only and the upload endpoint does not exist. |
 | `--overwrite` | off | Allow uploads to replace existing files when the request asks for it. Needs `--write`. |
 | `--max-upload` | `1GiB` | Maximum size of one upload request. Accepts `B`, `KB`/`MB`/`GB`/`TB` (powers of 1000) and `KiB`/`MiB`/`GiB`/`TiB` (powers of 1024). Needs `--write`. |
+| `--max-files` | `1000` | Maximum number of files in one upload request. Needs `--write`. |
 | `--allow-ext` | all | Comma-separated extensions that are listed, downloadable **and** uploadable, e.g. `zip,mp4,mp3`. See [Extension filters](#extension-filters). |
 | `--allow-upload-ext` | same as `--allow-ext` | Comma-separated extensions that can be uploaded. Must be within `--allow-ext`. Needs `--write`. |
 | `--token` | generated | Bearer token required on `/api` requests. At least 8 characters. |
@@ -261,7 +262,8 @@ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/info"
   "overwrite": false,
   "visibleExtensions": ["mp3", "mp4", "zip"],
   "uploadExtensions": ["zip"],
-  "maxUpload": 1073741824
+  "maxUpload": 1073741824,
+  "maxFiles": 1000
 }
 ```
 
@@ -272,6 +274,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/info"
 | `visibleExtensions` | Extensions that are listed and downloadable. Empty means all. |
 | `uploadExtensions` | Extensions that can be uploaded. Empty means all. |
 | `maxUpload` | Maximum upload request size in bytes. `0` when read-only. |
+| `maxFiles` | Maximum number of files in one upload request. `0` when read-only. |
 
 ### `GET /api/list`
 
@@ -429,7 +432,9 @@ Errors:
 | 403 | `overwrite_disabled` | `overwrite=true` without `--overwrite` on the server. |
 | 404 | `not_found` | Destination folder does not exist and `mkdirs` is not set, or `path` runs through a hidden file. |
 | 409 | `exists` | A file or folder with that name already exists. |
+| 408 | `timeout` | No data arrived for a minute. The upload is abandoned and nothing is saved. |
 | 413 | `too_large` | Request body exceeds `--max-upload`. The server stops reading at the limit. |
+| 413 | `too_many_files` | More files than `--max-files`. |
 | 415 | `ext_not_allowed` | Extension not in the upload list. The response includes the list (see below). |
 
 ```json
@@ -437,6 +442,8 @@ Errors:
 ```
 
 `--max-upload` limits the whole request body, including multipart overhead. It is not a per-file limit.
+
+An upload may be as slow as the network needs, but if no data arrives for a minute the server gives up with `408 timeout`, so a client that disappears mid-upload does not hold the connection and its temporary files open.
 
 ### Errors
 
@@ -464,7 +471,9 @@ API errors share one shape. `code` is stable and meant for programs; `error` is 
 | 403 | `permission_denied` | The OS refused access. |
 | 404 | `not_found` | Missing, or hidden: by `--allow-ext`, or a symlink that leaves the served folder. Hidden paths always get exactly this response. |
 | 409 | `exists` | Upload target already exists. |
+| 408 | `timeout` | Upload stalled for a minute. |
 | 413 | `too_large` | Upload exceeds `--max-upload`. |
+| 413 | `too_many_files` | Upload has more files than `--max-files`. |
 | 415 | `ext_not_allowed` | Upload extension not allowed; see `allowed`. |
 | 500 | `internal` | Unexpected server error. Details are in the server log under the request's `req_id`. |
 
@@ -557,7 +566,8 @@ Logs are not rotated by the server. Use your platform's tools (journald/logrotat
 - **Symlinks.** Links are followed only if they stay inside the served folder **and** use a relative target. All other links are hidden and unreachable. The extension filter applies to every name along a chain of links, so `song.mp3 -> notes.txt` is hidden when `txt` is not allowed. Hard links cannot be detected, so a hard link named `x.mp3` serves whatever file it points to.
 - **Hidden files** get the same `404 not_found` as missing ones from every endpoint, including when they are used as a folder (`hidden.txt/x`), so clients cannot tell they exist.
 - **Browsers.** Cross-site uploads are rejected, and `--no-auth` servers only answer to IP addresses, `localhost` and `--allow-host` names. See [Browser protections](#browser-protections).
-- **Uploads** are off by default, never overwrite unless both the server (`--overwrite`) and the request (`overwrite=true`) allow it, and are limited by `--max-upload`. Uploaded files are served back as attachments with `nosniff` and a sandboxing CSP.
+- **Uploads** are off by default, never overwrite unless both the server (`--overwrite`) and the request (`overwrite=true`) allow it, are limited by `--max-upload` and `--max-files`, and are abandoned if they stall for a minute. Uploaded files are served back as attachments with `nosniff` and a sandboxing CSP.
 - **Known limitations:**
   - Without `--overwrite`, files are moved into place with a hard link, which fails if the name was taken in the meantime. Filesystems without hard links, such as FAT, fall back to a rename, where a file created by another program in the instant between the final existence check and the move can still be replaced.
-  - Temporary files from uploads interrupted by a crash (`.upload-*.tmp`) are hidden but not cleaned up automatically.
+  - Temporary files from uploads interrupted by a crash (`.upload-*.tmp`) stay hidden until the next start with `--write`, which deletes any older than a day in the background. Files are only deleted if their names match the server's own pattern exactly.
+  - `--max-upload` and `--max-files` limit each request, not their total. Anyone allowed to upload can fill the disk with enough requests.

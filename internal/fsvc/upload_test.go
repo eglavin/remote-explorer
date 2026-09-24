@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"remote-explorer/internal/extfilter"
 )
@@ -261,5 +262,43 @@ func TestTempFilesHidden(t *testing.T) {
 	}
 	if _, _, err := svc.Open(tmp); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Open temp file: got %v", err)
+	}
+}
+
+func TestRemoveStaleTempFiles(t *testing.T) {
+	svc, rootDir := newUploadTree(t, nil)
+	old := time.Now().Add(-48 * time.Hour)
+	files := map[string]bool{ // name -> should be removed
+		".upload-ABCDEFGHIJKLMNOP.tmp":      true,
+		"adir/.upload-QRSTUVWXYZ234567.tmp": true,
+		".upload-RECENTRECENTRECE.tmp":      false, // written just now
+		".upload-notes.tmp":                 false, // not a name the server generates
+		".upload-zzzzzzzzzzzzzzzz.tmp":      false, // lowercase: not from rand.Text
+		"keep.mp3":                          false,
+	}
+	for name := range files {
+		p := filepath.Join(rootDir, filepath.FromSlash(name))
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(name, "RECENT") {
+			if err := os.Chtimes(p, old, old); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	n, err := svc.RemoveStaleTempFiles(24 * time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("removed %d files, want 2", n)
+	}
+	for name, removed := range files {
+		_, err := os.Stat(filepath.Join(rootDir, filepath.FromSlash(name)))
+		if gone := errors.Is(err, os.ErrNotExist); gone != removed {
+			t.Errorf("%s: removed = %v, want %v", name, gone, removed)
+		}
 	}
 }

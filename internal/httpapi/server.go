@@ -2,8 +2,10 @@
 package httpapi
 
 import (
+	"cmp"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"remote-explorer/internal/fsvc"
 )
@@ -14,6 +16,9 @@ type Options struct {
 	Info       Info
 	Token      string
 	TrustProxy bool
+	// UploadIdleTimeout aborts an upload when no body bytes arrive for this
+	// long. Zero means DefaultUploadIdleTimeout.
+	UploadIdleTimeout time.Duration
 	// AllowedHosts are host names accepted in the Host header besides IP
 	// addresses and localhost. Only checked when Token is empty.
 	AllowedHosts []string
@@ -27,11 +32,12 @@ type Info struct {
 	VisibleExtensions []string `json:"visibleExtensions"`
 	UploadExtensions  []string `json:"uploadExtensions"`
 	MaxUpload         int64    `json:"maxUpload"`
+	MaxFiles          int      `json:"maxFiles"`
 }
 
 // New returns the complete handler, including request logging.
 func New(o Options) http.Handler {
-	a := &api{svc: o.Service, info: o.Info, logger: o.Logger}
+	a := &api{svc: o.Service, info: o.Info, logger: o.Logger, uploadIdle: cmp.Or(o.UploadIdleTimeout, DefaultUploadIdleTimeout)}
 
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /api/info", a.getInfo)
@@ -61,7 +67,8 @@ func New(o Options) http.Handler {
 }
 
 type api struct {
-	svc    *fsvc.Service
-	info   Info
-	logger *slog.Logger
+	svc        *fsvc.Service
+	info       Info
+	logger     *slog.Logger
+	uploadIdle time.Duration
 }

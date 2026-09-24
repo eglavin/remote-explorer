@@ -259,3 +259,27 @@ func TestParseAllowHost(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMaxFiles(t *testing.T) {
+	t.Setenv(TokenEnv, "")
+	dir := t.TempDir()
+	c, err := parse(t, "--write", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxFiles != DefaultMaxFiles {
+		t.Errorf("default MaxFiles = %d, want %d", c.MaxFiles, DefaultMaxFiles)
+	}
+	if c, err := parse(t, "--write", "--max-files=5", dir); err != nil || c.MaxFiles != 5 {
+		t.Errorf("--max-files=5: %v, %+v", err, c)
+	}
+	for _, args := range [][]string{
+		{"--write", "--max-files=0"},
+		{"--write", "--max-files=-1"},
+		{"--max-files=5"}, // without --write
+	} {
+		if _, err := parse(t, append(args, dir)...); err == nil {
+			t.Errorf("Parse(%q) succeeded, want error", args)
+		}
+	}
+}

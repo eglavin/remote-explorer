@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"remote-explorer/internal/safepath"
 )
@@ -40,8 +41,51 @@ const (
 	tempSuffix = ".tmp"
 )
 
+const tempIDLength = 16
+
 func isTempName(name string) bool {
 	return strings.HasPrefix(name, tempPrefix) && strings.HasSuffix(name, tempSuffix)
+}
+
+// isOwnTempName reports whether name has exactly the form this server
+// gives temporary files. Only such files are ever deleted by the cleanup,
+// so a user's own ".upload-notes.tmp" is safe.
+func isOwnTempName(name string) bool {
+	id, ok := strings.CutPrefix(name, tempPrefix)
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, tempSuffix)
+	return ok && len(id) == tempIDLength && strings.Trim(id, "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567") == ""
+}
+
+// RemoveStaleTempFiles deletes temporary upload files, anywhere under the
+// root, that were last written more than olderThan ago. They are left behind
+// when the server is killed mid-upload. Recent ones are kept, since another
+// server may be serving the same folder and still writing them.
+func (s *Service) RemoveStaleTempFiles(olderThan time.Duration) (removed int, err error) {
+	cutoff := time.Now().Add(-olderThan)
+	err = fs.WalkDir(s.root.FS(), ".", func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// Skip unreadable folders rather than give up on the rest.
+			if d != nil && d.IsDir() && p != "." {
+				return fs.SkipDir
+			}
+			return walkErr
+		}
+		if !d.Type().IsRegular() || !isOwnTempName(d.Name()) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			return nil
+		}
+		if err := s.root.Remove(p); err == nil {
+			removed++
+		}
+		return nil
+	})
+	return removed, err
 }
 
 type UploadOptions struct {
@@ -109,7 +153,7 @@ func (u *Upload) Add(name string, src io.Reader) error {
 		return err
 	}
 
-	tmp := path.Join(u.tmpDir, tempPrefix+rand.Text()[:16]+tempSuffix)
+	tmp := path.Join(u.tmpDir, tempPrefix+rand.Text()[:tempIDLength]+tempSuffix)
 	f, err := u.svc.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return mapErr(err)

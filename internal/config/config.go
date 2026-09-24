@@ -25,6 +25,7 @@ const (
 	MinTokenLength     = 8
 	MaxTokenLength     = 256
 	DefaultTokenLength = 26
+	DefaultMaxFiles    = 1000
 )
 
 // ErrFlagSyntax wraps errors the flag package has already printed along with usage.
@@ -36,6 +37,7 @@ type Config struct {
 	Write      bool
 	Overwrite  bool
 	MaxUpload  int64
+	MaxFiles   int
 	VisibleExt extfilter.Set
 	UploadExt  extfilter.Set
 	Token      string
@@ -69,13 +71,14 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 		c                                     Config
 		maxUpload, allowExt, uploadExt, level string
 		allowHost                             string
-		tokenLength                           int
+		tokenLength, maxFiles                 int
 	)
 	fs.StringVar(&c.Root, "root", "", "folder to serve (can also be given as the only argument)")
 	fs.StringVar(&c.Addr, "addr", "127.0.0.1:8080", "address to listen on; use 0.0.0.0:8080 to accept other machines")
 	fs.BoolVar(&c.Write, "write", false, "enable uploads; without it the server is read-only")
 	fs.BoolVar(&c.Overwrite, "overwrite", false, "let uploads replace existing files (needs --write)")
 	fs.StringVar(&maxUpload, "max-upload", "1GiB", "maximum size of one upload request, e.g. 500MB or 2GiB (needs --write)")
+	fs.IntVar(&maxFiles, "max-files", DefaultMaxFiles, "maximum number of files in one upload request (needs --write)")
 	fs.StringVar(&allowExt, "allow-ext", "", "comma-separated extensions that are listed, downloadable and uploadable, e.g. zip,mp4,mp3 (default all)")
 	fs.StringVar(&uploadExt, "allow-upload-ext", "", "comma-separated extensions that can be uploaded; must be within --allow-ext (needs --write)")
 	fs.StringVar(&c.Token, "token", "", "bearer token required on /api requests (or set "+TokenEnv+"); a random one is generated and printed if not given")
@@ -118,7 +121,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	c.Root = root
 
 	if !c.Write {
-		for _, name := range []string{"overwrite", "max-upload", "allow-upload-ext"} {
+		for _, name := range []string{"overwrite", "max-upload", "max-files", "allow-upload-ext"} {
 			if set[name] {
 				return nil, fmt.Errorf("--%s has no effect without --write", name)
 			}
@@ -128,6 +131,10 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 		if c.MaxUpload, err = ParseSize(maxUpload); err != nil {
 			return nil, fmt.Errorf("--max-upload: %w", err)
 		}
+		if maxFiles < 1 {
+			return nil, fmt.Errorf("--max-files must be at least 1, got %d", maxFiles)
+		}
+		c.MaxFiles = maxFiles
 	}
 
 	if c.VisibleExt, err = extfilter.Parse(allowExt); err != nil {

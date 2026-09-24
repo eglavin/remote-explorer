@@ -99,8 +99,9 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 	}
 	defer root.Close()
 
+	svc := fsvc.New(root, cfg.VisibleExt, cfg.UploadExt)
 	handler := httpapi.New(httpapi.Options{
-		Service: fsvc.New(root, cfg.VisibleExt, cfg.UploadExt),
+		Service: svc,
 		Logger:  logger,
 		Info: httpapi.Info{
 			Writable:          cfg.Write,
@@ -108,6 +109,7 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 			VisibleExtensions: cfg.VisibleExt.List(),
 			UploadExtensions:  cfg.UploadExt.List(),
 			MaxUpload:         cfg.MaxUpload,
+			MaxFiles:          cfg.MaxFiles,
 		},
 		Token:        cfg.Token,
 		TrustProxy:   cfg.TrustProxy,
@@ -126,6 +128,9 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 		ErrorLog:    slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 	logStartup(logger, cfg, ln.Addr())
+	if cfg.Write {
+		go removeStaleTempFiles(logger, svc)
+	}
 	printAccess(os.Stdout, cfg, ln.Addr())
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -150,6 +155,22 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 	return nil
 }
 
+// staleTempAge is well beyond DefaultUploadIdleTimeout, so any temporary
+// file this old belongs to an upload that can no longer finish.
+const staleTempAge = 24 * time.Hour
+
+// removeStaleTempFiles runs in the background because walking a large
+// folder can take a while, and nothing depends on it finishing.
+func removeStaleTempFiles(logger *slog.Logger, svc *fsvc.Service) {
+	n, err := svc.RemoveStaleTempFiles(staleTempAge)
+	if n > 0 {
+		logger.Info("removed temporary files left by interrupted uploads", "count", n)
+	}
+	if err != nil {
+		logger.Warn("cleaning up temporary upload files", "err", err)
+	}
+}
+
 func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 	attrs := []any{
 		"version", versionString(),
@@ -163,6 +184,7 @@ func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 			"mode", "read-write",
 			"upload_ext", cfg.UploadExt.String(),
 			"max_upload", cfg.MaxUpload,
+			"max_files", cfg.MaxFiles,
 			"overwrite", cfg.Overwrite,
 		)
 	} else {

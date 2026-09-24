@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"remote-explorer/internal/extfilter"
 	"remote-explorer/internal/fsvc"
@@ -26,6 +30,9 @@ func newWritableTestServer(t *testing.T, cfg testConfig) *testServer {
 	cfg.info.Writable = true
 	if cfg.info.MaxUpload == 0 {
 		cfg.info.MaxUpload = 1 << 20
+	}
+	if cfg.info.MaxFiles == 0 {
+		cfg.info.MaxFiles = 100
 	}
 	return newConfiguredTestServer(t, cfg)
 }
@@ -273,5 +280,62 @@ func TestUploadRequiresToken(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	if rr := s.do(t, req); rr.Code != http.StatusCreated {
 		t.Errorf("with token: status %d: %s", rr.Code, rr.Body)
+	}
+}
+
+func TestUploadMaxFiles(t *testing.T) {
+	s := newWritableTestServer(t, testConfig{info: Info{MaxFiles: 2}})
+	rr := s.upload(t, "", uploadFile{"1.mp3", "x"}, uploadFile{"2.mp3", "x"}, uploadFile{"3.mp3", "x"})
+	if rr.Code != http.StatusRequestEntityTooLarge || decode[errorBody](t, rr).Code != "too_many_files" {
+		t.Fatalf("3 files with a limit of 2: %d %s", rr.Code, rr.Body)
+	}
+	if _, ok := s.read(t, "1.mp3"); ok {
+		t.Error("files saved although the request was rejected")
+	}
+	if left := s.tempFiles(t); len(left) > 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+	if rr := s.upload(t, "", uploadFile{"1.mp3", "x"}, uploadFile{"2.mp3", "x"}); rr.Code != http.StatusCreated {
+		t.Errorf("2 files with a limit of 2: %d %s", rr.Code, rr.Body)
+	}
+}
+
+// A client that stops sending must not hold its connection and temporary
+// files open indefinitely.
+func TestStalledUploadTimesOut(t *testing.T) {
+	s := newWritableTestServer(t, testConfig{uploadIdle: 200 * time.Millisecond})
+	srv := httptest.NewServer(s.handler)
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	const boundary = "b0undary"
+	partial := "--" + boundary + "\r\n" +
+		`Content-Disposition: form-data; name="file"; filename="slow.mp3"` + "\r\n\r\n" +
+		"the first bytes of a file that never finishes"
+	fmt.Fprintf(conn, "POST /api/upload HTTP/1.1\r\nHost: %s\r\n"+
+		"Content-Type: multipart/form-data; boundary=%s\r\nContent-Length: 100000\r\n\r\n%s",
+		srv.Listener.Addr(), boundary, partial)
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("no response to a stalled upload: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Errorf("status %d, want 408", resp.StatusCode)
+	}
+
+	// The temporary file is removed after the response is sent.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(s.tempFiles(t)) > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if left := s.tempFiles(t); len(left) > 0 {
+		t.Errorf("temp files left: %v", left)
 	}
 }
