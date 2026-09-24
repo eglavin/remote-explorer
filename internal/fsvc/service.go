@@ -196,23 +196,23 @@ func mapErr(err error) error {
 	return err
 }
 
-// dirErr maps an error from resolving the directory rel. Windows reports a
-// path through a file ("song.mp3/x") as not found where Unix says ENOTDIR;
-// checking the parents makes both platforms answer ErrNotDir.
+// dirErr maps an error from resolving or creating the directory rel. A path
+// through a file ("song.mp3/x") is reported differently by each OS and Go
+// version (ENOTDIR, not found, EEXIST from MkdirAll), so the path itself is
+// checked to answer ErrNotDir consistently.
 func (s *Service) dirErr(rel string, err error) error {
-	err = mapErr(err)
-	if !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	for p := path.Dir(rel); p != "."; p = path.Dir(p) {
-		if info, statErr := s.root.Stat(p); statErr == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("%w: %s is a file", ErrNotDir, p)
-			}
-			break
+	for p := rel; p != "."; p = path.Dir(p) {
+		info, statErr := s.root.Stat(p)
+		if statErr != nil {
+			continue
 		}
+		if !info.IsDir() {
+			return fmt.Errorf("%w: %s is a file", ErrNotDir, p)
+		}
+		// The deepest existing element is a directory, so the parents are too.
+		break
 	}
-	return err
+	return mapErr(err)
 }
 
 // os.Root reports escapes (e.g. through a symlink) with an unexported error,
