@@ -1,0 +1,2 @@
+# Keep LF everywhere so checkouts, including CI on Windows, match what gofmt expects.
+* text=auto eol=lf

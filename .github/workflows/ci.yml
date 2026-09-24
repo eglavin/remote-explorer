@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Called by release.yml so a release only happens after CI passes.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The minimum from go.mod, and the latest release.
+        go: ["1.25.x", "stable"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        if: runner.os != 'Linux'
+        run: go test ./...
+
+      # The race detector needs cgo, which the Linux runners have out of the box.
+      - name: Test with race detector
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+
+  checks:
+    name: Format, tidy and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # git describe needs history and tags to stamp the version.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Check go.mod is tidy
+        run: go mod tidy -diff
+
+      - name: Build all platforms
+        run: go run ./scripts/build
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-explorer-binaries
+          path: dist/
+          if-no-files-found: error

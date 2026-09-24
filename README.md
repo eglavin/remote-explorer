@@ -107,6 +107,30 @@ Building remote-explorer v1.0.0 for 6 targets into /src/remote-explorer/dist
 
 The script can be run from anywhere inside the repository. Verify the downloads with `sha256sum -c SHA256SUMS`.
 
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and on pull requests:
+
+- **Tests:** `go vet` and `go test` on Ubuntu, macOS and Windows, each on Go 1.25 (the minimum in `go.mod`) and the latest stable release. On Linux the tests run with the race detector.
+- **Checks:** `gofmt`, `go mod tidy`, and a full `go run ./scripts/build`. The resulting binaries and `SHA256SUMS` are uploaded as the `remote-explorer-binaries` artifact of the run.
+
+### Publishing a release
+
+Releases are published by [`.github/workflows/release.yml`](.github/workflows/release.yml) when a version tag is pushed:
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+The workflow:
+
+1. runs the full CI workflow, and stops if anything fails;
+2. builds all platforms with the tag stamped as the version (`remote-explorer --version` prints `v1.2.0`);
+3. creates a GitHub release named `remote-explorer v1.2.0`. The six binaries and `SHA256SUMS` are attached, and the notes contain install instructions followed by GitHub's generated list of changes.
+
+Tags must look like `vMAJOR.MINOR.PATCH`. A suffix such as `v1.2.0-rc.1` publishes a pre-release. Pushing a tag that already has a release fails without changing it; delete the release first to publish it again.
+
 ### Versions
 
 `remote-explorer --version` prints the version, which also appears in the startup log line:
