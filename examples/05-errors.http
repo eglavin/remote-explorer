@@ -1,0 +1,97 @@
+@baseUrl = http://127.0.0.1:8080
+@token = paste-token-here
+
+# Error responses look like {"error":"…","code":"…"}; see the README for the full list.
+
+### No token
+# Expect 401 "unauthorized" (unless the server runs with --no-auth).
+GET {{baseUrl}}/api/list
+
+### Wrong token
+# Expect 401 "unauthorized".
+GET {{baseUrl}}/api/list
+Authorization: Bearer not-the-right-token
+
+### Escape with ..
+# Expect 403 "path_escape".
+GET {{baseUrl}}/api/list?path=../
+Authorization: Bearer {{token}}
+
+### Escape with URL-encoded ..
+# Expect 403 "path_escape".
+GET {{baseUrl}}/api/download?path=%2e%2e/%2e%2e/secret.txt
+Authorization: Bearer {{token}}
+
+### Escape with a backslash
+# Expect 403 "path_escape".
+GET {{baseUrl}}/api/list?path=..%5C..%5C
+Authorization: Bearer {{token}}
+
+### Absolute path
+# Expect 403 "path_escape".
+GET {{baseUrl}}/api/list?path=/etc
+Authorization: Bearer {{token}}
+
+### Missing file
+# Expect 404 "not_found".
+GET {{baseUrl}}/api/download?path=does-not-exist.txt
+Authorization: Bearer {{token}}
+
+### Downloading a folder
+# Expect 400 "is_directory".
+GET {{baseUrl}}/api/download?path=examples-demo
+Authorization: Bearer {{token}}
+
+### Listing a file
+# Expect 400 "not_a_directory".
+GET {{baseUrl}}/api/list?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+
+### Upload into a folder that does not exist, without mkdirs
+# Expect 404 "not_found" (or 404 plain text if the server is read-only).
+POST {{baseUrl}}/api/upload?path=no-such-folder
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="hello.txt"
+Content-Type: text/plain
+
+hello
+--ExampleBoundary--
+
+### Upload a file that already exists, without overwrite
+# Expect 409 "exists".
+POST {{baseUrl}}/api/upload?path=examples-demo
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="hello.txt"
+Content-Type: text/plain
+
+hello
+--ExampleBoundary--
+
+### Upload with a disallowed extension
+# Only fails when the server has an upload filter, e.g. --write --allow-upload-ext=txt.
+# Expect 415 "ext_not_allowed" with "allowed":["txt"].
+# With the setup from examples/README.md (no filter) it succeeds with 201 instead.
+POST {{baseUrl}}/api/upload?path=examples-demo
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="program.exe"
+Content-Type: application/octet-stream
+
+not really a program
+--ExampleBoundary--
+
+### Upload body that is not multipart
+# Expect 400 "invalid_upload".
+POST {{baseUrl}}/api/upload?path=examples-demo
+Authorization: Bearer {{token}}
+Content-Type: text/plain
+
+just some text

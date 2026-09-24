@@ -1,0 +1,64 @@
+@baseUrl = http://127.0.0.1:8080
+@token = paste-token-here
+
+# Uploads need the server started with --write.
+# The part name ("file") does not matter; every part with a filename is saved.
+
+### Upload one file, creating the folder if needed
+# Expect 201: {"files":[{"name":"hello.txt","path":"examples-demo/hello.txt",…}]}
+# Running it a second time gives 409 "exists".
+POST {{baseUrl}}/api/upload?path=examples-demo&mkdirs=true
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="hello.txt"
+Content-Type: text/plain
+
+< ./files/hello.txt
+--ExampleBoundary--
+
+### Upload several files in one request (all are saved, or none)
+# Expect 201 with two entries.
+POST {{baseUrl}}/api/upload?path=examples-demo/batch&mkdirs=true
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="hello.txt"
+Content-Type: text/plain
+
+< ./files/hello.txt
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="notes.md"
+Content-Type: text/markdown
+
+< ./files/notes.md
+--ExampleBoundary--
+
+### Upload inline content, no local file needed
+# Expect 201.
+POST {{baseUrl}}/api/upload?path=examples-demo
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="inline.txt"
+Content-Type: text/plain
+
+This file was typed straight into the request.
+--ExampleBoundary--
+
+### Replace an existing file
+# Needs the server started with --overwrite, otherwise 403 "overwrite_disabled".
+# Expect 201.
+POST {{baseUrl}}/api/upload?path=examples-demo&overwrite=true
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=ExampleBoundary
+
+--ExampleBoundary
+Content-Disposition: form-data; name="file"; filename="hello.txt"
+Content-Type: text/plain
+
+Hello again, this content replaced the original.
+--ExampleBoundary--

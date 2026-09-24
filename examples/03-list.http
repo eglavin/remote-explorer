@@ -1,0 +1,22 @@
+@baseUrl = http://127.0.0.1:8080
+@token = paste-token-here
+
+### List the served folder
+# Expect 200: {"path":"","parent":null,"entries":[…]}
+GET {{baseUrl}}/api/list
+Authorization: Bearer {{token}}
+
+### List a subfolder (created by 02-upload.http)
+# Expect 200: {"path":"examples-demo","parent":"",…}
+GET {{baseUrl}}/api/list?path=examples-demo
+Authorization: Bearer {{token}}
+
+### List a nested subfolder
+# Expect 200: {"path":"examples-demo/batch","parent":"examples-demo",…}
+GET {{baseUrl}}/api/list?path=examples-demo/batch
+Authorization: Bearer {{token}}
+
+### Names with spaces or other special characters must be URL-encoded
+# "My Music" becomes My%20Music. Expect 200, or 404 if the folder does not exist.
+GET {{baseUrl}}/api/list?path=My%20Music
+Authorization: Bearer {{token}}

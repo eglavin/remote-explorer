@@ -1,0 +1,30 @@
+@baseUrl = http://127.0.0.1:8080
+@token = paste-token-here
+
+### Download a file (uploaded by 02-upload.http)
+# Expect 200 with Content-Disposition: attachment; filename=hello.txt
+GET {{baseUrl}}/api/download?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+
+### Only the headers: size, type and modification time without the body
+# Expect 200 with Content-Length and Last-Modified, and an empty body.
+HEAD {{baseUrl}}/api/download?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+
+### Part of a file: the first 5 bytes
+# Expect 206 Partial Content with Content-Range: bytes 0-4/<size>
+GET {{baseUrl}}/api/download?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+Range: bytes=0-4
+
+### Resume from byte 6 to the end
+# Expect 206.
+GET {{baseUrl}}/api/download?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+Range: bytes=6-
+
+### Conditional download: only if changed since a date
+# Expect 304 Not Modified if the file is older than this date, otherwise 200.
+GET {{baseUrl}}/api/download?path=examples-demo/hello.txt
+Authorization: Bearer {{token}}
+If-Modified-Since: Fri, 01 Jan 2100 00:00:00 GMT

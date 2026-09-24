@@ -1,0 +1,11 @@
+@baseUrl = http://127.0.0.1:8080
+@token = paste-token-here
+
+### Health check (no token needed)
+# Expect 200: {"status":"ok"}
+GET {{baseUrl}}/healthz
+
+### Server info: what this server allows
+# Expect 200: {"writable":…,"overwrite":…,"visibleExtensions":[…],"uploadExtensions":[…],"maxUpload":…}
+GET {{baseUrl}}/api/info
+Authorization: Bearer {{token}}
