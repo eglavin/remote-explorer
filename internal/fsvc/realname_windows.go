@@ -2,7 +2,6 @@ package fsvc
 
 import (
 	"fmt"
-	"path"
 	"strings"
 )
 
@@ -11,11 +10,11 @@ import (
 // Short names always contain '~', so only those names pay for the directory
 // scan that confirms an entry with exactly that long name exists.
 func (s *Service) checkRealName(rel string) error {
-	name := path.Base(rel)
+	dirPath, name := splitRaw(rel)
 	if !strings.Contains(name, "~") {
 		return nil
 	}
-	dir, err := s.root.Open(path.Dir(rel))
+	dir, err := s.root.Open(dirPath)
 	if err != nil {
 		return mapErr(err)
 	}

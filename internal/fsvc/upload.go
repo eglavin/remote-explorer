@@ -77,7 +77,7 @@ func (s *Service) BeginUpload(dir string, opts UploadOptions) (*Upload, error) {
 		return nil, s.dirErr(dir, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: %s", ErrNotDir, dir)
+		return nil, s.notDirErr(dir)
 	}
 	return &Upload{svc: s, dir: dir, opts: opts, names: map[string]bool{}}, nil
 }

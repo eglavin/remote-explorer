@@ -8,8 +8,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 )
@@ -137,6 +140,37 @@ func requireToken(token string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireKnownHost rejects requests whose Host header is not an IP address,
+// localhost or one of allowed. This defeats DNS rebinding, where a page on
+// evil.example re-points its own name at this server: the browser treats the
+// server as same-origin, but still sends "Host: evil.example".
+func requireKnownHost(allowed []string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r.Host, allowed) {
+			writeError(w, r, errHostNotAllowed)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func hostAllowed(hostport string, allowed []string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(host, "["), "]"), ".")
+	// Browsers always send Host; only non-browser clients leave it out.
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return true
+	}
+	// A rebinding attack needs a name it controls, never an IP address.
+	if _, err := netip.ParseAddr(host); err == nil {
+		return true
+	}
+	return slices.ContainsFunc(allowed, func(a string) bool { return strings.EqualFold(a, host) })
 }
 
 type responseRecorder struct {

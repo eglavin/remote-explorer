@@ -234,3 +234,28 @@ func TestParseSize(t *testing.T) {
 		}
 	}
 }
+
+func TestParseAllowHost(t *testing.T) {
+	t.Setenv(TokenEnv, "")
+	dir := t.TempDir()
+	c, err := parse(t, "--no-auth", "--allow-host", " NAS.lan., files.example.org ", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"nas.lan", "files.example.org"}; !slices.Equal(c.AllowedHosts, want) {
+		t.Errorf("AllowedHosts = %q, want %q", c.AllowedHosts, want)
+	}
+
+	for _, args := range [][]string{
+		{"--allow-host=nas.lan"}, // a token is in use
+		{"--no-auth", "--allow-host="},
+		{"--no-auth", "--allow-host=nas.lan,"},
+		{"--no-auth", "--allow-host=nas.lan:8080"},
+		{"--no-auth", "--allow-host=http://nas.lan"},
+		{"--no-auth", "--allow-host=[::1]"},
+	} {
+		if _, err := parse(t, append(args, dir)...); err == nil {
+			t.Errorf("Parse(%q) succeeded, want error", args)
+		}
+	}
+}

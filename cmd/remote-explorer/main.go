@@ -109,8 +109,9 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 			UploadExtensions:  cfg.UploadExt.List(),
 			MaxUpload:         cfg.MaxUpload,
 		},
-		Token:      cfg.Token,
-		TrustProxy: cfg.TrustProxy,
+		Token:        cfg.Token,
+		TrustProxy:   cfg.TrustProxy,
+		AllowedHosts: cfg.AllowedHosts,
 	})
 
 	ln, err := net.Listen("tcp", cfg.Addr)

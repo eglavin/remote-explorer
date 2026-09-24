@@ -27,6 +27,7 @@ type testConfig struct {
 	token           string
 	visible, upload extfilter.Set
 	info            Info
+	allowedHosts    []string
 }
 
 // newTestServer serves a tree of {a.mp3, b.txt, sub/c.mp3} read-only with no extension filter.
@@ -68,6 +69,8 @@ func newConfiguredTestServer(t *testing.T, cfg testConfig) *testServer {
 		Logger:  slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Info:    cfg.info,
 		Token:   cfg.token,
+		// httptest.NewRequest sends "Host: example.com".
+		AllowedHosts: append([]string{"example.com"}, cfg.allowedHosts...),
 	})
 	return &testServer{handler: h, logs: logs, dir: dir}
 }

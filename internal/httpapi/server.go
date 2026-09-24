@@ -14,6 +14,9 @@ type Options struct {
 	Info       Info
 	Token      string
 	TrustProxy bool
+	// AllowedHosts are host names accepted in the Host header besides IP
+	// addresses and localhost. Only checked when Token is empty.
+	AllowedHosts []string
 }
 
 // Info describes the server's capabilities to clients. It also drives the
@@ -39,9 +42,20 @@ func New(o Options) http.Handler {
 		apiMux.HandleFunc("POST /api/upload", a.upload)
 	}
 
+	// Browsers attach no token, so the token already stops cross-site pages.
+	// These checks protect --no-auth servers, and cost nothing otherwise.
+	csrf := http.NewCrossOriginProtection()
+	csrf.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, errCrossOrigin)
+	}))
+	apiHandler := csrf.Handler(requireToken(o.Token, apiMux))
+	if o.Token == "" {
+		apiHandler = requireKnownHost(o.AllowedHosts, apiHandler)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.healthz)
-	mux.Handle("/api/", requireToken(o.Token, apiMux))
+	mux.Handle("/api/", apiHandler)
 
 	return withLogging(o.Logger, o.TrustProxy, mux)
 }

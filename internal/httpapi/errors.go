@@ -17,6 +17,8 @@ var (
 	errBadMultipart      = errors.New("malformed multipart body")
 	errNoFiles           = errors.New("upload contains no files")
 	errBadQuery          = errors.New("invalid query parameter")
+	errCrossOrigin       = errors.New("cross-origin request from a browser")
+	errHostNotAllowed    = errors.New("host header not allowed")
 )
 
 type errorBody struct {
@@ -34,6 +36,10 @@ func classify(err error) (int, errorBody) {
 	switch {
 	case errors.Is(err, errUnauthorized):
 		return http.StatusUnauthorized, errorBody{Error: "missing or invalid token", Code: "unauthorized"}
+	case errors.Is(err, errCrossOrigin):
+		return http.StatusForbidden, errorBody{Error: "cross-origin requests are not allowed", Code: "cross_origin"}
+	case errors.Is(err, errHostNotAllowed):
+		return http.StatusForbidden, errorBody{Error: "host not allowed; see --allow-host", Code: "host_not_allowed"}
 	case errors.As(err, &tooLarge):
 		return http.StatusRequestEntityTooLarge, errorBody{Error: "upload exceeds the size limit", Code: "too_large"}
 	case errors.As(err, &extErr):

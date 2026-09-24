@@ -159,6 +159,7 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--token` | generated | Bearer token required on `/api` requests. At least 8 characters. |
 | `--token-length` | `26` | Length of the generated token, 8 to 256. Only applies when no token is supplied. |
 | `--no-auth` | off | Do not require a token. Anyone who can reach the server can use the API. |
+| `--allow-host` | | Comma-separated host names, such as `nas.lan`, that clients may use to reach a `--no-auth` server. IP addresses and `localhost` always work. Needs `--no-auth`. See [Browser protections](#browser-protections). |
 | `--trust-proxy` | off | Log the client address from `X-Forwarded-For`. Only use behind a reverse proxy you control. |
 | `--log-format` | `text` | `text` or `json`. |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. |
@@ -190,6 +191,13 @@ Where the token comes from:
 The token is never written to the logs. A token you supply is not printed either; the startup examples show `<token>` instead.
 
 `--no-auth` turns authentication off. The server then logs a warning at startup.
+
+### Browser protections
+
+A web page open in your browser can send requests to any address your machine can reach, including `127.0.0.1`. A token stops that, because the page does not have it. Two more checks cover `--no-auth` servers:
+
+- **Cross-site requests.** Uploads that a browser marks as coming from another site (through the `Sec-Fetch-Site` or `Origin` header) are rejected with `403 cross_origin`. This applies with or without a token. curl and other non-browser clients send neither header and are not affected.
+- **Host names (only with `--no-auth`).** The `Host` header must be an IP address, `localhost`, or a name given with `--allow-host`. Anything else gets `403 host_not_allowed`. This stops DNS rebinding, where a site points its own domain at your server so the browser treats the server as part of that site. If you reach a `--no-auth` server by name, for example `http://nas.lan:8080`, start it with `--allow-host nas.lan`.
 
 `GET /healthz` never needs a token, so health checks work without it.
 
@@ -308,7 +316,7 @@ Some entries are left out of listings:
 - names that cannot be requested through the API on this OS;
 - temporary files from uploads in progress (`.upload-*.tmp`).
 
-Errors: `400 not_a_directory` if `path` is a file, `404 not_found`, plus the [path errors](#paths).
+Errors: `400 not_a_directory` if `path` is a visible file, `404 not_found` if it is missing or hidden, plus the [path errors](#paths).
 
 ### `GET /api/download`
 
@@ -416,10 +424,10 @@ Errors:
 | 400 | `no_files` | No part had a filename. |
 | 400 | `invalid_filename` | A file name is not valid on this OS, or is reserved for temporary files. |
 | 400 | `duplicate_name` | The same name appears twice in the request. |
-| 400 | `not_a_directory` | `path` is a file, or runs through one. |
+| 400 | `not_a_directory` | `path` is a visible file, or runs through one. |
 | 400 | `invalid_query` | `mkdirs` or `overwrite` is not a boolean. |
 | 403 | `overwrite_disabled` | `overwrite=true` without `--overwrite` on the server. |
-| 404 | `not_found` | Destination folder does not exist and `mkdirs` is not set. |
+| 404 | `not_found` | Destination folder does not exist and `mkdirs` is not set, or `path` runs through a hidden file. |
 | 409 | `exists` | A file or folder with that name already exists. |
 | 413 | `too_large` | Request body exceeds `--max-upload`. The server stops reading at the limit. |
 | 415 | `ext_not_allowed` | Extension not in the upload list. The response includes the list (see below). |
@@ -442,17 +450,19 @@ API errors share one shape. `code` is stable and meant for programs; `error` is 
 |---|---|---|
 | 400 | `invalid_path` | Malformed path, or not allowed on this OS. |
 | 400 | `invalid_filename` | Upload file name not allowed. |
-| 400 | `not_a_directory` | Expected a folder, found a file. |
+| 400 | `not_a_directory` | Expected a folder, found a visible file. |
 | 400 | `is_directory` | Expected a file, found a folder. |
 | 400 | `duplicate_name` | Same file name twice in one upload. |
 | 400 | `invalid_upload` | Upload body is not valid multipart. |
 | 400 | `no_files` | Upload contained no files. |
 | 400 | `invalid_query` | A query parameter has an invalid value. |
 | 401 | `unauthorized` | Missing or wrong token. |
-| 403 | `path_escape` | Path points outside the served folder. |
+| 403 | `cross_origin` | A browser sent the request from another site. See [Browser protections](#browser-protections). |
+| 403 | `host_not_allowed` | `--no-auth` server reached through a host name not allowed by `--allow-host`. |
+| 403 | `path_escape` | Path contains `..` or is absolute. |
 | 403 | `overwrite_disabled` | Overwrite requested but not enabled on the server. |
 | 403 | `permission_denied` | The OS refused access. |
-| 404 | `not_found` | Missing, or hidden by `--allow-ext`. |
+| 404 | `not_found` | Missing, or hidden: by `--allow-ext`, or a symlink that leaves the served folder. Hidden paths always get exactly this response. |
 | 409 | `exists` | Upload target already exists. |
 | 413 | `too_large` | Upload exceeds `--max-upload`. |
 | 415 | `ext_not_allowed` | Upload extension not allowed; see `allowed`. |
@@ -544,7 +554,9 @@ Logs are not rotated by the server. Use your platform's tools (journald/logrotat
 
 - **Bind address.** The default `127.0.0.1` only accepts this machine. `0.0.0.0` exposes the server to your network. There is no TLS, so the token travels in plain text. Beyond a trusted network, put the server behind a reverse proxy that terminates HTTPS.
 - **Tokens.** Keep the default length (26 characters, about 130 bits) or longer for anything reachable from other machines. 8 characters is fine for local use only. Supply a fixed token through `REMOTE_EXPLORER_TOKEN` rather than `--token` so it does not appear in the process list.
-- **Symlinks.** Links are followed only if they stay inside the served folder **and** use a relative target. All other links are hidden and unreachable.
+- **Symlinks.** Links are followed only if they stay inside the served folder **and** use a relative target. All other links are hidden and unreachable. The extension filter applies to every name along a chain of links, so `song.mp3 -> notes.txt` is hidden when `txt` is not allowed. Hard links cannot be detected, so a hard link named `x.mp3` serves whatever file it points to.
+- **Hidden files** get the same `404 not_found` as missing ones from every endpoint, including when they are used as a folder (`hidden.txt/x`), so clients cannot tell they exist.
+- **Browsers.** Cross-site uploads are rejected, and `--no-auth` servers only answer to IP addresses, `localhost` and `--allow-host` names. See [Browser protections](#browser-protections).
 - **Uploads** are off by default, never overwrite unless both the server (`--overwrite`) and the request (`overwrite=true`) allow it, and are limited by `--max-upload`. Uploaded files are served back as attachments with `nosniff` and a sandboxing CSP.
 - **Known limitations:**
   - Without `--overwrite`, a file created by another program in the instant between the final existence check and the move into place can still be replaced.

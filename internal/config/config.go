@@ -43,10 +43,12 @@ type Config struct {
 	// for this run, so it must be shown to the user.
 	TokenGenerated bool
 	NoAuth         bool
-	TrustProxy     bool
-	LogFormat      string
-	LogLevel       slog.Level
-	LogFile        string
+	// AllowedHosts are extra Host header names accepted with --no-auth.
+	AllowedHosts []string
+	TrustProxy   bool
+	LogFormat    string
+	LogLevel     slog.Level
+	LogFile      string
 	// ShowVersion is set by --version. No other fields are filled in then.
 	ShowVersion bool
 }
@@ -66,6 +68,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	var (
 		c                                     Config
 		maxUpload, allowExt, uploadExt, level string
+		allowHost                             string
 		tokenLength                           int
 	)
 	fs.StringVar(&c.Root, "root", "", "folder to serve (can also be given as the only argument)")
@@ -79,6 +82,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.IntVar(&tokenLength, "token-length", DefaultTokenLength,
 		fmt.Sprintf("length of the generated token, %d to %d characters", MinTokenLength, MaxTokenLength))
 	fs.BoolVar(&c.NoAuth, "no-auth", false, "do not require a token; anyone who can reach the server can use the API")
+	fs.StringVar(&allowHost, "allow-host", "", "comma-separated host names clients may use to reach a --no-auth server, besides IP addresses and localhost")
 	fs.BoolVar(&c.TrustProxy, "trust-proxy", false, "log the client address from X-Forwarded-For (only behind a proxy you control)")
 	fs.StringVar(&c.LogFormat, "log-format", "text", "log format: text or json")
 	fs.StringVar(&level, "log-level", "info", "minimum log level: debug, info, warn or error")
@@ -167,6 +171,14 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 			return nil, fmt.Errorf("the supplied token must be at least %d characters", MinTokenLength)
 		}
 	}
+	if set["allow-host"] {
+		if !c.NoAuth {
+			return nil, errors.New("--allow-host only applies with --no-auth; with a token any host name is accepted")
+		}
+		if c.AllowedHosts, err = parseHosts(allowHost); err != nil {
+			return nil, fmt.Errorf("--allow-host: %w", err)
+		}
+	}
 	if c.LogFormat != "text" && c.LogFormat != "json" {
 		return nil, fmt.Errorf("--log-format must be text or json, got %q", c.LogFormat)
 	}
@@ -174,6 +186,21 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 		return nil, fmt.Errorf("--log-level: %w", err)
 	}
 	return &c, nil
+}
+
+func parseHosts(s string) ([]string, error) {
+	var hosts []string
+	for _, raw := range strings.Split(s, ",") {
+		h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+		if h == "" {
+			return nil, fmt.Errorf("empty host name in %q", s)
+		}
+		if strings.ContainsAny(h, ":/[] ") {
+			return nil, fmt.Errorf("%q must be a bare host name, without port or scheme", strings.TrimSpace(raw))
+		}
+		hosts = append(hosts, h)
+	}
+	return hosts, nil
 }
 
 // tokenAlphabet matches rand.Text: unambiguous, and safe in URLs and headers.

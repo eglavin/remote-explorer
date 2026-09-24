@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -67,7 +68,7 @@ func (s *Service) List(rel string) (*Listing, error) {
 		return nil, s.dirErr(rel, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("%w: %s", ErrNotDir, rel)
+		return nil, s.notDirErr(rel)
 	}
 	dir, err := s.root.Open(rel)
 	if err != nil {
@@ -113,17 +114,13 @@ func (s *Service) Open(rel string) (*os.File, fs.FileInfo, error) {
 	// Stat before opening: opening a named pipe would block until a writer appears.
 	info, err := s.root.Stat(rel)
 	if err != nil {
-		return nil, nil, mapErr(err)
+		return nil, nil, s.dirErr(rel, err)
 	}
 	if info.IsDir() {
 		return nil, nil, fmt.Errorf("%w: %s", ErrIsDir, rel)
 	}
-	name := path.Base(rel)
-	if !info.Mode().IsRegular() || !s.visible.Allows(name) || isTempName(name) {
+	if !info.Mode().IsRegular() || !s.fileVisible(rel) {
 		return nil, nil, fmt.Errorf("%w: %s", ErrNotFound, rel)
-	}
-	if err := s.checkRealName(rel); err != nil {
-		return nil, nil, err
 	}
 
 	f, err := s.root.Open(rel)
@@ -170,9 +167,67 @@ func (s *Service) entry(dir string, d fs.DirEntry) (Entry, bool) {
 	case info.IsDir():
 		return Entry{Name: name, Path: rel, Type: TypeDir, Modified: info.ModTime().UTC()}, true
 	case info.Mode().IsRegular() && s.visible.Allows(name):
+		// Plain files need no more checks; their name is already the real one.
+		if d.Type()&fs.ModeSymlink != 0 && !s.fileVisible(rel) {
+			return Entry{}, false
+		}
 		return fileEntry(rel, info), true
 	}
 	return Entry{}, false
+}
+
+// maxLinkHops matches the limit Linux puts on nested symlinks.
+const maxLinkHops = 40
+
+// fileVisible reports whether clients may see the file at rel. Every name
+// along a chain of symlinks must pass the filters, so a link named "x.mp3"
+// cannot expose "secret.key". Anything that is not, in the end, a regular
+// file is not visible.
+func (s *Service) fileVisible(rel string) bool {
+	for range maxLinkHops {
+		_, name := splitRaw(rel)
+		if !s.visible.Allows(name) || isTempName(name) || s.checkRealName(rel) != nil {
+			return false
+		}
+		info, err := s.root.Lstat(rel)
+		if err != nil {
+			return false
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			return info.Mode().IsRegular()
+		}
+		target, err := s.root.Readlink(rel)
+		if err != nil {
+			return false
+		}
+		// os.Root refuses absolute targets, so they could never be opened anyway.
+		if filepath.IsAbs(target) || filepath.VolumeName(target) != "" || strings.HasPrefix(filepath.ToSlash(target), "/") {
+			return false
+		}
+		dir, _ := splitRaw(rel)
+		rel = dir + "/" + filepath.ToSlash(target)
+	}
+	return false
+}
+
+// splitRaw splits rel at its last slash without cleaning it. path.Dir would
+// resolve "link/../x" lexically, but os.Root follows "link" before applying
+// "..", so cleaning could name a different file than the one opened.
+func splitRaw(rel string) (dir, name string) {
+	i := strings.LastIndexByte(rel, '/')
+	if i < 0 {
+		return ".", rel
+	}
+	return rel[:i], rel[i+1:]
+}
+
+// notDirErr reports a directory path that names a file. Files clients cannot
+// see are reported as missing, so the error does not reveal they exist.
+func (s *Service) notDirErr(rel string) error {
+	if !s.fileVisible(rel) {
+		return fmt.Errorf("%w: %s", ErrNotFound, rel)
+	}
+	return fmt.Errorf("%w: %s is a file", ErrNotDir, rel)
 }
 
 // apiPath converts os.Root's "." for the root into the API's "".
@@ -191,15 +246,18 @@ func mapErr(err error) error {
 		// A path runs through a file, as in "song.mp3/x".
 		return fmt.Errorf("%w: %w", ErrNotDir, err)
 	case isEscape(err):
-		return fmt.Errorf("%w: %w", safepath.ErrEscape, err)
+		// Links leading out of the root are hidden from listings, so reaching
+		// through one must look the same as a missing path.
+		return fmt.Errorf("%w: %w", ErrNotFound, err)
 	}
 	return err
 }
 
-// dirErr maps an error from resolving or creating the directory rel. A path
-// through a file ("song.mp3/x") is reported differently by each OS and Go
-// version (ENOTDIR, not found, EEXIST from MkdirAll), so the path itself is
-// checked to answer ErrNotDir consistently.
+// dirErr maps an error from resolving rel or creating it as a directory. A
+// path through a file ("song.mp3/x") is reported differently by each OS and
+// Go version (ENOTDIR, not found, EEXIST from MkdirAll), so the path itself
+// is checked to answer consistently, and to answer ErrNotFound when the file
+// is one clients cannot see.
 func (s *Service) dirErr(rel string, err error) error {
 	for p := rel; p != "."; p = path.Dir(p) {
 		info, statErr := s.root.Stat(p)
@@ -207,7 +265,7 @@ func (s *Service) dirErr(rel string, err error) error {
 			continue
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("%w: %s is a file", ErrNotDir, p)
+			return s.notDirErr(p)
 		}
 		// The deepest existing element is a directory, so the parents are too.
 		break

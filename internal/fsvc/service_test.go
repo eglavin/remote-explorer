@@ -3,12 +3,13 @@ package fsvc
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"remote-explorer/internal/extfilter"
-	"remote-explorer/internal/safepath"
 )
 
 // newTree creates root/{b.mp3, A.txt, empty.mp3, zdir/, adir/c.mp3} and a sibling
@@ -194,15 +195,121 @@ func TestListSymlinks(t *testing.T) {
 	if !slices.Contains(got, "inside") {
 		t.Error("relative symlink inside the root is not listed")
 	}
-	if _, err := svc.List("escape"); !errors.Is(err, safepath.ErrEscape) {
-		t.Errorf("listing through escaping symlink: got %v, want ErrEscape", err)
+	if _, err := svc.List("escape"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("listing through escaping symlink: got %v, want ErrNotFound", err)
 	}
-	if _, _, err := svc.Open("escape/secret.mp3"); !errors.Is(err, safepath.ErrEscape) {
-		t.Errorf("opening through escaping symlink: got %v, want ErrEscape", err)
+	if _, _, err := svc.Open("escape/secret.mp3"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("opening through escaping symlink: got %v, want ErrNotFound", err)
 	}
 	if f, _, err := svc.Open("inside/c.mp3"); err != nil {
 		t.Errorf("opening through relative symlink: %v", err)
 	} else {
 		f.Close()
+	}
+}
+
+func TestSymlinksCannotBypassFilter(t *testing.T) {
+	svc, rootDir, _ := newTree(t, extfilter.Set{"mp3"})
+	links := map[string]string{
+		"leak.mp3":      "A.txt",
+		"alias.mp3":     "b.mp3",
+		"chain.mp3":     "hop.mp3",
+		"hop.mp3":       "A.txt",
+		"adir/up.mp3":   "../A.txt",
+		"adir/ok.mp3":   "../b.mp3",
+		"zdir/deep.mp3": "../adir/up.mp3",
+		"hidden.txt":    "b.mp3",
+	}
+	for link, target := range links {
+		if err := os.Symlink(filepath.FromSlash(target), filepath.Join(rootDir, filepath.FromSlash(link))); err != nil {
+			t.Skipf("cannot create symlinks here: %v", err)
+		}
+	}
+
+	for rel, want := range map[string]bool{
+		"leak.mp3":      false,
+		"chain.mp3":     false,
+		"adir/up.mp3":   false,
+		"zdir/deep.mp3": false,
+		"hidden.txt":    false,
+		"alias.mp3":     true,
+		"adir/ok.mp3":   true,
+	} {
+		f, _, err := svc.Open(rel)
+		if f != nil {
+			f.Close()
+		}
+		if want && err != nil {
+			t.Errorf("Open(%q) = %v, want the link to be served", rel, err)
+		}
+		if !want && !errors.Is(err, ErrNotFound) {
+			t.Errorf("Open(%q) = %v, want ErrNotFound", rel, err)
+		}
+
+		dir, name := path.Split(rel)
+		l, err := svc.List(path.Clean(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := slices.Contains(names(l), name); got != want {
+			t.Errorf("%q listed = %v, want %v", rel, got, want)
+		}
+	}
+}
+
+func TestSymlinkToTempFileHidden(t *testing.T) {
+	svc, rootDir, _ := newTree(t, nil)
+	tmp := tempPrefix + "0123456789abcdef" + tempSuffix
+	if err := os.WriteFile(filepath.Join(rootDir, tmp), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tmp, filepath.Join(rootDir, "partial.mp3")); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if _, _, err := svc.Open("partial.mp3"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Open through a link to an upload temp file = %v, want ErrNotFound", err)
+	}
+}
+
+// Every way of naming a filtered file must fail exactly like a missing one.
+func TestHiddenFilesLookMissing(t *testing.T) {
+	svc, rootDir, outside := newTree(t, extfilter.Set{"mp3"})
+	svc.upload = extfilter.Set{"mp3"}
+	hasLinks := os.Symlink(outside, filepath.Join(rootDir, "escape")) == nil
+	if hasLinks {
+		if err := os.Symlink("A.txt", filepath.Join(rootDir, "leak.mp3")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hidden := []string{"A.txt", "A.txt/x", "A.txt/x/y", "missing", "missing/x"}
+	if hasLinks {
+		hidden = append(hidden, "escape", "escape/secret.mp3", "leak.mp3", "leak.mp3/x")
+	}
+	for _, rel := range hidden {
+		if _, err := svc.List(rel); !errors.Is(err, ErrNotFound) {
+			t.Errorf("List(%q) = %v, want ErrNotFound", rel, err)
+		}
+		if f, _, err := svc.Open(rel); !errors.Is(err, ErrNotFound) {
+			if f != nil {
+				f.Close()
+			}
+			t.Errorf("Open(%q) = %v, want ErrNotFound", rel, err)
+		}
+		for _, mkdirs := range []bool{false, true} {
+			if mkdirs && strings.HasPrefix(rel, "missing") {
+				continue // creating it is the point of mkdirs
+			}
+			if _, err := svc.BeginUpload(rel, UploadOptions{MakeDirs: mkdirs}); !errors.Is(err, ErrNotFound) {
+				t.Errorf("BeginUpload(%q, mkdirs=%v) = %v, want ErrNotFound", rel, mkdirs, err)
+			}
+		}
+	}
+
+	// A visible file is still reported as one.
+	for _, rel := range []string{"b.mp3", "b.mp3/x"} {
+		if _, err := svc.List(rel); !errors.Is(err, ErrNotDir) {
+			t.Errorf("List(%q) = %v, want ErrNotDir", rel, err)
+		}
 	}
 }
