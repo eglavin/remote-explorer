@@ -195,6 +195,13 @@ func TestParseLogging(t *testing.T) {
 	}
 }
 
+func TestParseVersionNeedsNoFolder(t *testing.T) {
+	c, err := parse(t, "--version")
+	if err != nil || !c.ShowVersion {
+		t.Errorf("--version: %+v, %v", c, err)
+	}
+}
+
 func TestParseFlagErrors(t *testing.T) {
 	if _, err := parse(t, "--help"); !errors.Is(err, flag.ErrHelp) {
 		t.Errorf("--help: got %v", err)

@@ -47,6 +47,8 @@ type Config struct {
 	LogFormat      string
 	LogLevel       slog.Level
 	LogFile        string
+	// ShowVersion is set by --version. No other fields are filled in then.
+	ShowVersion bool
 }
 
 // Parse parses args (without the program name). Usage and flag errors are written to output.
@@ -81,12 +83,16 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.StringVar(&c.LogFormat, "log-format", "text", "log format: text or json")
 	fs.StringVar(&level, "log-level", "info", "minimum log level: debug, info, warn or error")
 	fs.StringVar(&c.LogFile, "log-file", "", "append logs to this file instead of stderr")
+	fs.BoolVar(&c.ShowVersion, "version", false, "print the version and exit")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %w", ErrFlagSyntax, err)
+	}
+	if c.ShowVersion {
+		return &Config{ShowVersion: true}, nil
 	}
 	set := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })

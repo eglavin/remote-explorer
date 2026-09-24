@@ -74,24 +74,46 @@ go build -o remote-explorer ./cmd/remote-explorer
 go test ./...
 ```
 
-Cross-compile by setting `GOOS` and `GOARCH`. `CGO_ENABLED=0` produces a fully static binary.
+### Release builds for every platform
 
-Bash:
+The build script is written in Go, so it runs the same on Windows, macOS and Linux:
 
 ```bash
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/remote-explorer-windows-amd64.exe ./cmd/remote-explorer
-CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o dist/remote-explorer-darwin-arm64 ./cmd/remote-explorer
-CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/remote-explorer-linux-amd64 ./cmd/remote-explorer
+go run ./scripts/build
 ```
 
-PowerShell:
+This cross-compiles static binaries (`CGO_ENABLED=0`, `-trimpath`, stripped) for:
 
-```powershell
-$env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
-go build -trimpath -ldflags="-s -w" -o dist/remote-explorer-linux-amd64 ./cmd/remote-explorer
+- `windows/amd64`, `windows/arm64`
+- `darwin/amd64`, `darwin/arm64`
+- `linux/amd64`, `linux/arm64`
+
+It writes them to `dist/` as `remote-explorer-<os>-<arch>[.exe]`, together with a `SHA256SUMS` file.
+
+```
+Building remote-explorer v1.0.0 for 6 targets into /src/remote-explorer/dist
+
+  ok    windows/amd64  remote-explorer-windows-amd64.exe       6.3 MB  39.4s
+  ok    windows/arm64  remote-explorer-windows-arm64.exe       5.7 MB  38.9s
+  ...
+  wrote SHA256SUMS
 ```
 
-Other common targets: `windows/arm64`, `darwin/amd64`, `linux/arm64`.
+| Option | Default | Description |
+|---|---|---|
+| `-targets` | all six above | Comma-separated `GOOS/GOARCH` pairs, e.g. `-targets linux/amd64,windows/amd64`. Any pair from `go tool dist list` works. |
+| `-version` | `git describe --tags --always --dirty` | Version stamped into the binaries. |
+| `-out` | `dist` | Output directory, relative to the module root. Only earlier `remote-explorer-*` files and `SHA256SUMS` are removed from it. |
+
+The script can be run from anywhere inside the repository. Verify the downloads with `sha256sum -c SHA256SUMS`.
+
+### Versions
+
+`remote-explorer --version` prints the version, which also appears in the startup log line:
+
+- Built with the script: the stamped version, e.g. `v1.2.0` or `39f0bbe-dirty`.
+- Built with plain `go build` or `go install`: `dev-<commit>` from the Git information Go embeds.
+- Run with `go run`: just `dev`.
 
 ## Command-line flags
 
@@ -117,6 +139,7 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--log-format` | `text` | `text` or `json`. |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. |
 | `--log-file` | stderr | Append logs to this file instead of writing to stderr. |
+| `--version` | | Print the version and exit. No folder needed. |
 
 | Environment variable | Description |
 |---|---|

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"syscall"
 	"time"
@@ -24,8 +25,41 @@ import (
 
 const shutdownTimeout = 10 * time.Second
 
+// version is set at build time by scripts/build with -ldflags "-X main.version=…".
+var version = "dev"
+
 func main() {
 	os.Exit(run(os.Args[1:]))
+}
+
+// versionString falls back to the VCS revision Go embeds in plain
+// "go build" and "go install" builds, which do not set version.
+func versionString() string {
+	if version != "dev" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	var revision string
+	var dirty bool
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if len(revision) < 7 {
+		return version
+	}
+	v := "dev-" + revision[:7]
+	if dirty {
+		v += "-dirty"
+	}
+	return v
 }
 
 func run(args []string) int {
@@ -39,6 +73,9 @@ func run(args []string) int {
 	case err != nil:
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 2
+	case cfg.ShowVersion:
+		fmt.Println("remote-explorer", versionString())
+		return 0
 	}
 
 	logger, closeLog, err := logging.New(cfg.LogFormat, cfg.LogLevel, cfg.LogFile)
@@ -114,6 +151,7 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 
 func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 	attrs := []any{
+		"version", versionString(),
 		"addr", addr.String(),
 		"root", cfg.Root,
 		"visible_ext", cfg.VisibleExt.String(),
