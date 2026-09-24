@@ -32,8 +32,9 @@ func (e *ExtNotAllowedError) Error() string {
 
 func (e *ExtNotAllowedError) Is(target error) bool { return target == ErrExtNotAllowed }
 
-// Temporary upload files live next to their destination so the final rename
-// stays on one filesystem. They are hidden from listings and downloads.
+// Temporary upload files live in the destination folder, or its deepest
+// existing parent until mkdirs creates it, so the final move stays on one
+// filesystem. They are hidden from listings and downloads.
 const (
 	tempPrefix = ".upload-"
 	tempSuffix = ".tmp"
@@ -53,8 +54,11 @@ type UploadOptions struct {
 // part-way leaves nothing behind. Always call Abort, typically deferred; it
 // is a no-op after a successful Commit.
 type Upload struct {
-	svc     *Service
-	dir     string
+	svc *Service
+	dir string
+	// tmpDir holds the temporary files: dir itself, or with MakeDirs its
+	// deepest existing parent, so a failed request creates no folders.
+	tmpDir  string
 	opts    UploadOptions
 	names   map[string]bool
 	pending []pendingFile
@@ -67,19 +71,19 @@ type pendingFile struct {
 
 // BeginUpload starts an upload into the directory dir.
 func (s *Service) BeginUpload(dir string, opts UploadOptions) (*Upload, error) {
-	if opts.MakeDirs && dir != "." {
-		if err := s.root.MkdirAll(dir, 0o755); err != nil {
+	tmpDir := dir
+	for {
+		info, err := s.root.Stat(tmpDir)
+		switch {
+		case err == nil && info.IsDir():
+			return &Upload{svc: s, dir: dir, tmpDir: tmpDir, opts: opts, names: map[string]bool{}}, nil
+		case err == nil:
+			return nil, s.notDirErr(tmpDir)
+		case !opts.MakeDirs || !errors.Is(err, fs.ErrNotExist) || tmpDir == ".":
 			return nil, s.dirErr(dir, err)
 		}
+		tmpDir = path.Dir(tmpDir)
 	}
-	info, err := s.root.Stat(dir)
-	if err != nil {
-		return nil, s.dirErr(dir, err)
-	}
-	if !info.IsDir() {
-		return nil, s.notDirErr(dir)
-	}
-	return &Upload{svc: s, dir: dir, opts: opts, names: map[string]bool{}}, nil
 }
 
 // Add validates name and streams src into a temporary file.
@@ -105,7 +109,7 @@ func (u *Upload) Add(name string, src io.Reader) error {
 		return err
 	}
 
-	tmp := path.Join(u.dir, tempPrefix+rand.Text()[:16]+tempSuffix)
+	tmp := path.Join(u.tmpDir, tempPrefix+rand.Text()[:16]+tempSuffix)
 	f, err := u.svc.root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return mapErr(err)
@@ -153,13 +157,17 @@ func (u *Upload) Commit() ([]Entry, error) {
 			return nil, err
 		}
 	}
+	if u.dir != u.tmpDir {
+		if err := u.svc.root.MkdirAll(u.dir, 0o755); err != nil {
+			return nil, u.svc.dirErr(u.dir, err)
+		}
+	}
 	saved := make([]Entry, 0, len(u.pending))
 	for i := range u.pending {
 		p := &u.pending[i]
-		if err := u.svc.root.Rename(p.tmp, p.dest); err != nil {
-			return nil, mapErr(err)
+		if err := u.place(p); err != nil {
+			return nil, err
 		}
-		p.committed = true
 		info, err := u.svc.root.Stat(p.dest)
 		if err != nil {
 			return nil, mapErr(err)
@@ -167,6 +175,29 @@ func (u *Upload) Commit() ([]Entry, error) {
 		saved = append(saved, fileEntry(p.dest, info))
 	}
 	return saved, nil
+}
+
+// place moves one file into its destination. Without Overwrite it links
+// rather than renames, because a link fails if the destination appeared
+// since checkDest, where a rename would silently replace it.
+func (u *Upload) place(p *pendingFile) error {
+	if !u.opts.Overwrite {
+		err := u.svc.root.Link(p.tmp, p.dest)
+		if err == nil {
+			p.committed = true
+			_ = u.svc.root.Remove(p.tmp)
+			return nil
+		}
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%w: %s", ErrExists, p.dest)
+		}
+		// Some filesystems, such as FAT, have no hard links; rename instead.
+	}
+	if err := u.svc.root.Rename(p.tmp, p.dest); err != nil {
+		return mapErr(err)
+	}
+	p.committed = true
+	return nil
 }
 
 // Abort removes any temporary files that were not committed.

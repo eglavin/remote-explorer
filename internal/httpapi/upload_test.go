@@ -236,6 +236,21 @@ func TestUploadMkdirs(t *testing.T) {
 	}
 }
 
+func TestRejectedMkdirsUploadCreatesNoFolders(t *testing.T) {
+	mp3 := extfilter.Set{"mp3"}
+	s := newWritableTestServer(t, testConfig{visible: mp3, upload: mp3})
+	rr := s.upload(t, "?path=x/y&mkdirs=true", uploadFile{"ok.mp3", "x"}, uploadFile{"bad.exe", "x"})
+	if rr.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body)
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, "x")); err == nil {
+		t.Error("rejected upload left folder x behind")
+	}
+	if left := s.tempFiles(t); len(left) > 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}
+
 func TestUploadRejectsNonMultipart(t *testing.T) {
 	s := newWritableTestServer(t, testConfig{})
 	req := httptest.NewRequest(http.MethodPost, "/api/upload", strings.NewReader("raw bytes"))

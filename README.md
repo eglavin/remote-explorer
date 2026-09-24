@@ -362,7 +362,7 @@ Uploads one or more files into a folder. **Only available with `--write`**; othe
 | Query parameter | Default | Description |
 |---|---|---|
 | `path` | served folder | Destination folder. |
-| `mkdirs` | `false` | `true` creates the destination folder, and any missing parents, if needed. |
+| `mkdirs` | `false` | `true` creates the destination folder, and any missing parents, if needed. Folders are only created if the upload succeeds. |
 | `overwrite` | `false` | `true` replaces existing files. Rejected with `403 overwrite_disabled` unless the server runs with `--overwrite`. |
 
 Boolean parameters accept `true`/`false`, `1`/`0`, `t`/`f`.
@@ -407,7 +407,7 @@ Success returns `201 Created` with an entry per saved file, in the same shape as
 }
 ```
 
-**A request succeeds or fails as a whole.** Each file is streamed to a hidden temporary file in the destination folder. Files are only moved into place after every file has passed its checks and finished transferring. If anything fails, all temporary files are deleted and nothing is saved.
+**A request succeeds or fails as a whole.** Each file is streamed to a hidden temporary file in the destination folder (or, with `mkdirs`, its deepest existing parent). Files are only moved into place, and missing folders only created, after every file has passed its checks and finished transferring. If anything fails, all temporary files are deleted and nothing is saved.
 
 Each file name is checked before any of its bytes are written:
 
@@ -559,5 +559,5 @@ Logs are not rotated by the server. Use your platform's tools (journald/logrotat
 - **Browsers.** Cross-site uploads are rejected, and `--no-auth` servers only answer to IP addresses, `localhost` and `--allow-host` names. See [Browser protections](#browser-protections).
 - **Uploads** are off by default, never overwrite unless both the server (`--overwrite`) and the request (`overwrite=true`) allow it, and are limited by `--max-upload`. Uploaded files are served back as attachments with `nosniff` and a sandboxing CSP.
 - **Known limitations:**
-  - Without `--overwrite`, a file created by another program in the instant between the final existence check and the move into place can still be replaced.
+  - Without `--overwrite`, files are moved into place with a hard link, which fails if the name was taken in the meantime. Filesystems without hard links, such as FAT, fall back to a rename, where a file created by another program in the instant between the final existence check and the move can still be replaced.
   - Temporary files from uploads interrupted by a crash (`.upload-*.tmp`) are hidden but not cleaned up automatically.

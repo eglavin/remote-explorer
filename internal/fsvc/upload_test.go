@@ -179,11 +179,70 @@ func TestBeginUploadDirs(t *testing.T) {
 	if _, err := svc.BeginUpload("b.mp3/sub", UploadOptions{MakeDirs: true}); !errors.Is(err, ErrNotDir) {
 		t.Errorf("mkdirs through a file: got %v", err)
 	}
-	if _, err := svc.BeginUpload("new/deeper", UploadOptions{MakeDirs: true}); err != nil {
+	up, err := svc.BeginUpload("new/deeper", UploadOptions{MakeDirs: true})
+	if err != nil {
 		t.Fatalf("mkdirs: %v", err)
 	}
-	if info, err := os.Stat(filepath.Join(rootDir, "new", "deeper")); err != nil || !info.IsDir() {
-		t.Errorf("directory not created: %v", err)
+	defer up.Abort()
+	if err := up.Add("x.mp3", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "new")); err == nil {
+		t.Error("directory created before the upload was committed")
+	}
+	if _, err := up.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(rootDir, "new", "deeper", "x.mp3")); got != "x" {
+		t.Errorf("x.mp3 = %q", got)
+	}
+	if left := tempFiles(t, rootDir); len(left) > 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}
+
+func TestFailedMkdirsUploadCreatesNothing(t *testing.T) {
+	svc, rootDir := newUploadTree(t, extfilter.Set{"mp3"})
+	up, err := svc.BeginUpload("new/deeper", UploadOptions{MakeDirs: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := up.Add("ok.mp3", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := up.Add("bad.exe", strings.NewReader("x")); !errors.Is(err, ErrExtNotAllowed) {
+		t.Fatalf("bad.exe: got %v", err)
+	}
+	up.Abort()
+	if _, err := os.Stat(filepath.Join(rootDir, "new")); err == nil {
+		t.Error("failed upload left its folders behind")
+	}
+	if left := tempFiles(t, rootDir); len(left) > 0 {
+		t.Errorf("temp files left: %v", left)
+	}
+}
+
+// A file that appears after the final existence check must not be replaced
+// when overwriting is off.
+func TestPlaceDoesNotReplaceNewFile(t *testing.T) {
+	svc, rootDir := newUploadTree(t, nil)
+	up, err := svc.BeginUpload(".", UploadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer up.Abort()
+	if err := up.Add("race.mp3", strings.NewReader("upload")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(rootDir, "race.mp3")
+	if err := os.WriteFile(dest, []byte("theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := up.place(&up.pending[0]); !errors.Is(err, ErrExists) {
+		t.Errorf("place over a new file: got %v, want ErrExists", err)
+	}
+	if got := readFile(t, dest); got != "theirs" {
+		t.Errorf("race.mp3 = %q, want it untouched", got)
 	}
 }
 
