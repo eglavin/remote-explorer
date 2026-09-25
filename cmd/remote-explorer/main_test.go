@@ -129,6 +129,28 @@ func TestPrintAccessNoTLS(t *testing.T) {
 	}
 }
 
+func TestPrintAccessFooter(t *testing.T) {
+	out := accessOutput(config.Config{NoAuth: true})
+	if !strings.HasSuffix(out, "\n\n"+strings.Repeat("─", 72)+"\nPress Ctrl+C to stop. Requests are logged below.\n\n") {
+		t.Errorf("output does not end with the divider and footer:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("escape codes written to a non-terminal:\n%q", out)
+	}
+	if out := accessOutput(config.Config{NoAuth: true, LogFile: "server.log"}); !strings.Contains(out, "Requests are logged to server.log.") {
+		t.Errorf("footer does not name the log file:\n%s", out)
+	}
+}
+
+func TestStyle(t *testing.T) {
+	if got := style(false).value("x"); got != "x" {
+		t.Errorf("colour off: %q", got)
+	}
+	if got := style(true).value("x"); got != "\x1b[1;36mx\x1b[0m" {
+		t.Errorf("colour on: %q", got)
+	}
+}
+
 func TestLoadCertificateFromFiles(t *testing.T) {
 	want, err := tlscert.SelfSigned([]string{"localhost"}, nil, time.Now())
 	if err != nil {

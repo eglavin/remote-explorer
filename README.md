@@ -180,7 +180,7 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--tls-cert` | self-signed | PEM certificate file to serve instead of a generated one. Needs `--tls-key`. |
 | `--tls-key` | | PEM private key file for `--tls-cert`. |
 | `--trust-proxy` | off | Log the client address from `X-Forwarded-For`. Only use behind a reverse proxy you control. |
-| `--log-format` | `text` | `text` or `json`. |
+| `--log-format` | `auto` | `pretty`, `text` or `json`. `auto` uses `pretty` on a terminal and `text` when logs are piped or go to `--log-file`. See [Logging](#logging). |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. |
 | `--log-file` | stderr | Append logs to this file instead of writing to stderr. |
 | `--version` | | Print the version and exit. No folder needed. |
@@ -573,7 +573,25 @@ Filters check file **names**, not contents. A renamed file passes.
 
 ## Logging
 
-Logs go to **stderr** by default (`--log-file` to append to a file), in `text` or `json` format. The startup banner and token go to stdout, so they never mix with logs.
+Logs go to **stderr** by default (`--log-file` to append to a file). The startup banner and token go to stdout, so they never mix with logs. The banner ends with a divider, and logging starts after it.
+
+`--log-format` picks the format:
+
+- `pretty`: compact coloured lines for watching in a terminal. This is the default when stderr is a terminal.
+- `text`: `key=value` lines with every field. This is the default when logs are piped or go to `--log-file`.
+- `json`: one JSON object per line, for log collectors.
+
+In `pretty` format a request line shows the time, level, method, path, status, response size, upload size (when there is one), duration, client address and request ID, followed by `path`, `error_code` and `err` when present. The user agent is left out; use `text` or `json` to see it.
+
+```
+22:09:57 INF GET /api/list 200 248 B 0ms 127.0.0.1:53611 req=988b79c8ff0540b5
+22:09:57 INF POST /api/upload 201 230 B in=286.1 MiB 643ms 127.0.0.1:56304 req=41ed21c5de6bd047 path=in
+22:09:57 WRN GET /api/list 403 67 B 0ms 127.0.0.1:53612 req=19e6bbd4077698f2 path=../x error_code=path_escape err="path escapes root: \"../x\" contains .."
+```
+
+Colour marks levels and status codes (green 2xx, cyan 3xx, yellow 4xx, red 5xx). The banner is in colour on a terminal as well. Set `NO_COLOR=1` to turn colour off. Piped or redirected output never contains colour codes.
+
+The rest of this section describes the fields as they appear in `text` format.
 
 Every request produces one `request` line, at a level that depends on the status:
 

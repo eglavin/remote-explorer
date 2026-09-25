@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -97,7 +98,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.StringVar(&c.TLSCert, "tls-cert", "", "PEM certificate file to serve (needs --tls-key); a self-signed one is generated if not given")
 	fs.StringVar(&c.TLSKey, "tls-key", "", "PEM private key file for --tls-cert")
 	fs.BoolVar(&c.TrustProxy, "trust-proxy", false, "log the client address from X-Forwarded-For (only behind a proxy you control)")
-	fs.StringVar(&c.LogFormat, "log-format", "text", "log format: text or json")
+	fs.StringVar(&c.LogFormat, "log-format", "auto", "log format: pretty, text, json, or auto for pretty on a terminal and text otherwise")
 	fs.StringVar(&level, "log-level", "info", "minimum log level: debug, info, warn or error")
 	fs.StringVar(&c.LogFile, "log-file", "", "append logs to this file instead of stderr")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print the version and exit")
@@ -202,8 +203,8 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	case (c.TLSCert == "") != (c.TLSKey == ""):
 		return nil, errors.New("--tls-cert and --tls-key must be given together")
 	}
-	if c.LogFormat != "text" && c.LogFormat != "json" {
-		return nil, fmt.Errorf("--log-format must be text or json, got %q", c.LogFormat)
+	if !slices.Contains([]string{"auto", "pretty", "text", "json"}, c.LogFormat) {
+		return nil, fmt.Errorf("--log-format must be auto, pretty, text or json, got %q", c.LogFormat)
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(level)); err != nil {
 		return nil, fmt.Errorf("--log-level: %w", err)

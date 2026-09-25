@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"remote-explorer/internal/fsvc"
 	"remote-explorer/internal/httpapi"
 	"remote-explorer/internal/logging"
+	"remote-explorer/internal/term"
 	"remote-explorer/internal/tlscert"
 )
 
@@ -145,11 +147,13 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 		ErrorLog:    slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 		TLSConfig:   tlsConfig,
 	}
+	// The banner comes first so that every log line, including startup
+	// warnings, appears below it rather than being buried above it.
+	printAccess(os.Stdout, cfg, ln.Addr(), selfSigned)
 	logStartup(logger, cfg, ln.Addr())
 	if cfg.Write {
 		go removeStaleTempFiles(logger, svc)
 	}
-	printAccess(os.Stdout, cfg, ln.Addr(), selfSigned)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -266,11 +270,28 @@ func tlsMode(cfg *config.Config) string {
 	}
 }
 
+// style wraps banner text in ANSI escape codes, or leaves it alone when
+// the output is not a colour terminal.
+type style bool
+
+func (s style) wrap(code, text string) string {
+	if !s {
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+
+func (s style) heading(text string) string { return s.wrap("1", text) }
+func (s style) value(text string) string   { return s.wrap("1;36", text) }
+func (s style) command(text string) string { return s.wrap("32", text) }
+func (s style) dim(text string) string     { return s.wrap("2", text) }
+
 // printAccess tells the user how to authenticate and how to call each
 // endpoint. It writes to stdout rather than the logger so the token never
 // ends up in log files or collectors. selfSigned is the generated
 // certificate, or nil when TLS is off or the certificate was supplied.
 func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x509.Certificate) {
+	s := style(term.Color(w))
 	base := "https://" + browsableAddr(addr)
 	if cfg.NoTLS {
 		base = "http://" + browsableAddr(addr)
@@ -279,15 +300,17 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x50
 	if cfg.Write {
 		mode = "read-write"
 	}
-	fmt.Fprintf(w, "Serving %s at %s (%s)\n\n", cfg.Root, base, mode)
+	fmt.Fprintf(w, "%s %s at %s %s\n\n", s.heading("Serving"), cfg.Root, s.value(base), s.dim("("+mode+")"))
 
 	// Browsers cannot know a new certificate, so they warn about it; the
 	// fingerprint lets the user check it is this server's before going on.
 	var curlTLS string
 	if selfSigned != nil {
-		fmt.Fprintf(w, "Self-signed certificate (new each run; set --tls-cert and --tls-key to use your own).\n"+
-			"Browsers will warn about it. Continue only if its SHA-256 fingerprint is:\n\n    %s\n\n",
-			tlscert.Fingerprint(selfSigned))
+		fmt.Fprintf(w, "%s %s\n%s\n\n    %s\n\n",
+			s.heading("Self-signed certificate"),
+			s.dim("(new each run; set --tls-cert and --tls-key to use your own)."),
+			"Browsers will warn about it. Continue only if its SHA-256 fingerprint is:",
+			s.value(tlscert.Fingerprint(selfSigned)))
 		curlTLS = `-k --pinnedpubkey "` + tlscert.PublicKeyPin(selfSigned) + `" `
 	}
 
@@ -296,12 +319,13 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x50
 	var auth string
 	switch {
 	case cfg.NoAuth:
-		fmt.Fprintf(w, "No token required (--no-auth).\n\n")
+		fmt.Fprintf(w, "%s\n\n", s.heading("No token required (--no-auth)."))
 	case cfg.TokenGenerated:
-		fmt.Fprintf(w, "Access token (new each run; set --token or %s to keep one):\n\n    %s\n\n", config.TokenEnv, cfg.Token)
+		fmt.Fprintf(w, "%s %s\n\n    %s\n\n", s.heading("Access token"),
+			s.dim("(new each run; set --token or "+config.TokenEnv+" to keep one):"), s.value(cfg.Token))
 		auth = `-H "Authorization: Bearer ` + cfg.Token + `" `
 	default:
-		fmt.Fprintf(w, "Using the token from --token or %s.\n\n", config.TokenEnv)
+		fmt.Fprintf(w, "%s\n\n", s.heading("Using the token from --token or "+config.TokenEnv+"."))
 		auth = `-H "Authorization: Bearer <token>" `
 	}
 
@@ -311,13 +335,13 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x50
 		if cfg.TokenGenerated {
 			browserURL += "#token=" + cfg.Token
 		}
-		fmt.Fprintf(w, "Browse in a web browser:\n\n    %s\n\n", browserURL)
+		fmt.Fprintf(w, "%s\n\n    %s\n\n", s.heading("Browse in a web browser:"), s.value(browserURL))
 	}
 
 	example := func(title, flags, endpoint string) {
-		fmt.Fprintf(w, "  %s\n    curl %s%s%s\"%s%s\"\n\n", title, curlTLS, auth, flags, base, endpoint)
+		fmt.Fprintf(w, "  %s\n    %s\n\n", title, s.command(fmt.Sprintf(`curl %s%s%s"%s%s"`, curlTLS, auth, flags, base, endpoint)))
 	}
-	fmt.Fprintf(w, "Examples:\n\n")
+	fmt.Fprintf(w, "%s\n\n", s.heading("Examples:"))
 	example("Server info and limits:", "", "/api/info")
 	example("List the root folder (add ?path=some/folder for others):", "", "/api/list")
 	example("Download a file (-OJ saves it under its own name):", "-OJ ", "/api/download?path=some/file.txt")
@@ -329,6 +353,14 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x50
 		example("Upload files into a folder (repeat -F for more files; "+options+"):",
 			`-F "file=@local-file.txt" `, "/api/upload?path=some/folder")
 	}
+
+	// The rule marks where the banner ends and the request log begins, so
+	// the examples do not scroll away unnoticed among log lines.
+	logs := "Requests are logged below."
+	if cfg.LogFile != "" {
+		logs = "Requests are logged to " + cfg.LogFile + "."
+	}
+	fmt.Fprintf(w, "%s\n%s\n\n", s.dim(strings.Repeat("─", 72)), s.dim("Press Ctrl+C to stop. "+logs))
 }
 
 // browsableAddr replaces a wildcard listen address such as 0.0.0.0 with

@@ -27,7 +27,7 @@ func TestParseDefaults(t *testing.T) {
 	}
 	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.WebUI || c.MaxUpload != 0 ||
 		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth || c.NoTLS || c.TLSCert != "" ||
-		c.LogFormat != "text" || c.LogLevel != slog.LevelInfo {
+		c.LogFormat != "auto" || c.LogLevel != slog.LevelInfo {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
@@ -207,6 +207,11 @@ func TestParseLogging(t *testing.T) {
 	c, err := parse(t, "--log-format=json", "--log-level=warn", dir)
 	if err != nil || c.LogFormat != "json" || c.LogLevel != slog.LevelWarn {
 		t.Errorf("got %+v, %v", c, err)
+	}
+	for _, format := range []string{"auto", "pretty", "text"} {
+		if c, err := parse(t, "--log-format="+format, dir); err != nil || c.LogFormat != format {
+			t.Errorf("--log-format=%s: %+v, %v", format, c, err)
+		}
 	}
 	for _, arg := range []string{"--log-format=xml", "--log-level=loud"} {
 		if _, err := parse(t, arg, dir); err == nil {
