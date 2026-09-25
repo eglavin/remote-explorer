@@ -17,20 +17,19 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }}, Go ${{ matrix.go }})
+    name: Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        # The minimum from go.mod, and the latest release.
-        go: ["1.25.x", "stable"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
 
+      # The same Go version release.yml builds with.
       - uses: actions/setup-go@v6
         with:
-          go-version: ${{ matrix.go }}
+          go-version-file: go.mod
 
       - name: Vet
         run: go vet ./...
