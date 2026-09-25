@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"remote-explorer/internal/fsvc"
+	"remote-explorer/internal/webui"
 )
 
 type Options struct {
@@ -16,6 +17,9 @@ type Options struct {
 	Info       Info
 	Token      string
 	TrustProxy bool
+	// WebUI serves the browser front end at /. Without it only /api and
+	// /healthz exist.
+	WebUI bool
 	// UploadIdleTimeout aborts an upload when no body bytes arrive for this
 	// long. Zero means DefaultUploadIdleTimeout.
 	UploadIdleTimeout time.Duration
@@ -61,6 +65,10 @@ func New(o Options) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.healthz)
+	if o.WebUI {
+		mux.Handle("GET /{$}", webui.Index())
+		mux.Handle("GET "+webui.AssetPrefix, webui.Assets())
+	}
 	mux.Handle("/api/", apiHandler)
 
 	return withLogging(o.Logger, o.TrustProxy, mux)

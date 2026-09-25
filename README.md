@@ -1,11 +1,12 @@
 # remote-explorer
 
-A small, single-binary HTTP server that exposes one folder as a JSON API. Clients can browse the folder and its subfolders, download files, and (when enabled) upload files. Nothing outside the served folder can be reached.
+A small, single-binary HTTPS server that exposes one folder as a JSON API. Clients can browse the folder and its subfolders, download files, and (when enabled) upload files. Nothing outside the served folder can be reached.
 
 Runs on Windows, macOS and Linux with no dependencies beyond the Go standard library.
 
 - **Read-only by default**: uploads must be switched on with `--write`.
 - **Token required by default**: a random token is generated and printed at startup.
+- **HTTPS by default**: a self-signed certificate is generated at startup, or you can supply your own.
 - **Confined to the folder**: `..`, absolute paths, symlinks and Windows path tricks cannot escape it.
 - **Optional extension filters** for what can be seen, downloaded and uploaded.
 - **Every request is logged** to stderr as text or JSON.
@@ -15,6 +16,8 @@ Runs on Windows, macOS and Linux with no dependencies beyond the Go standard lib
 - [Quick start](#quick-start)
 - [Building](#building)
 - [Command-line flags](#command-line-flags)
+- [HTTPS](#https)
+- [Web UI](#web-ui)
 - [Authentication](#authentication)
 - [Paths](#paths)
 - [API reference](#api-reference)
@@ -35,10 +38,15 @@ go build -o remote-explorer ./cmd/remote-explorer
 ./remote-explorer ~/Music
 ```
 
-The server prints its address, an access token, and ready-to-paste examples for every endpoint:
+The server prints its address, its certificate's fingerprint, an access token, and ready-to-paste examples for every endpoint:
 
 ```
-Serving /home/me/Music at http://127.0.0.1:8080 (read-only)
+Serving /home/me/Music at https://127.0.0.1:8080 (read-only)
+
+Self-signed certificate (new each run; set --tls-cert and --tls-key to use your own).
+Browsers will warn about it. Continue only if its SHA-256 fingerprint is:
+
+    8A:56:0A:24:C9:AD:BF:74:46:B6:D4:1C:FC:6F:23:07:00:1B:C3:1A:96:6C:29:AF:87:D6:3B:3D:9A:37:C4:72
 
 Access token (new each run; set --token or REMOTE_EXPLORER_TOKEN to keep one):
 
@@ -47,7 +55,7 @@ Access token (new each run; set --token or REMOTE_EXPLORER_TOKEN to keep one):
 Examples:
 
   Server info and limits:
-    curl -H "Authorization: Bearer WT2W6L7UHJP42G3KWPAQKZHNZB" "http://127.0.0.1:8080/api/info"
+    curl -k --pinnedpubkey "sha256//wBuDaZdT8OzfziWRWJhNHag0QTiDOn6ENjPdxkBGyG0=" -H "Authorization: Bearer WT2W6L7UHJP42G3KWPAQKZHNZB" "https://127.0.0.1:8080/api/info"
   ...
 ```
 
@@ -55,6 +63,12 @@ To allow uploads:
 
 ```bash
 ./remote-explorer --write ~/Music
+```
+
+To browse the folder in a web browser as well, add `--web-ui`. The server then also prints a link to open (see [Web UI](#web-ui)):
+
+```bash
+./remote-explorer --web-ui ~/Music
 ```
 
 To accept connections from other machines, listen on all interfaces:
@@ -155,14 +169,18 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--overwrite` | off | Allow uploads to replace existing files when the request asks for it. Needs `--write`. |
 | `--max-upload` | `1GiB` | Maximum size of one upload request. Accepts `B`, `KB`/`MB`/`GB`/`TB` (powers of 1000) and `KiB`/`MiB`/`GiB`/`TiB` (powers of 1024). Needs `--write`. |
 | `--max-files` | `1000` | Maximum number of files in one upload request. Needs `--write`. |
+| `--web-ui` | off | Serve a folder listing page for web browsers at `/`. See [Web UI](#web-ui). |
 | `--allow-ext` | all | Comma-separated extensions that are listed, downloadable **and** uploadable, e.g. `zip,mp4,mp3`. See [Extension filters](#extension-filters). |
 | `--allow-upload-ext` | same as `--allow-ext` | Comma-separated extensions that can be uploaded. Must be within `--allow-ext`. Needs `--write`. |
 | `--token` | generated | Bearer token required on `/api` requests. At least 8 characters. |
 | `--token-length` | `26` | Length of the generated token, 8 to 256. Only applies when no token is supplied. |
 | `--no-auth` | off | Do not require a token. Anyone who can reach the server can use the API. |
 | `--allow-host` | | Comma-separated host names, such as `nas.lan`, that clients may use to reach a `--no-auth` server. IP addresses and `localhost` always work. Needs `--no-auth`. See [Browser protections](#browser-protections). |
+| `--no-tls` | off | Serve plain HTTP instead of HTTPS. The token and files then travel unencrypted. See [HTTPS](#https). |
+| `--tls-cert` | self-signed | PEM certificate file to serve instead of a generated one. Needs `--tls-key`. |
+| `--tls-key` | | PEM private key file for `--tls-cert`. |
 | `--trust-proxy` | off | Log the client address from `X-Forwarded-For`. Only use behind a reverse proxy you control. |
-| `--log-format` | `text` | `text` or `json`. |
+| `--log-format` | `auto` | `pretty`, `text` or `json`. `auto` uses `pretty` on a terminal and `text` when logs are piped or go to `--log-file`. See [Logging](#logging). |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error`. |
 | `--log-file` | stderr | Append logs to this file instead of writing to stderr. |
 | `--version` | | Print the version and exit. No folder needed. |
@@ -171,9 +189,45 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 |---|---|
 | `REMOTE_EXPLORER_TOKEN` | Token to use when `--token` is not given. Keeps the token out of the process list. Ignored with `--no-auth`. |
 
-Invalid combinations stop the server at startup with an explanation, for example `--overwrite` without `--write`, `--no-auth` with `--token`, or an upload extension outside `--allow-ext`.
+Invalid combinations stop the server at startup with an explanation, for example `--overwrite` without `--write`, `--no-auth` with `--token`, `--tls-cert` without `--tls-key`, or an upload extension outside `--allow-ext`.
 
 Exit codes: `0` on clean shutdown, `1` on a runtime error, `2` on invalid flags.
+
+## HTTPS
+
+The server speaks HTTPS unless started with `--no-tls`.
+
+**Generated certificate (default).** At each start the server creates a new key and a self-signed certificate in memory. Nothing is written to disk. The certificate covers `localhost`, the machine's host name, `127.0.0.1`, `::1`, the listen address (every interface address when listening on `0.0.0.0`) and any `--allow-host` names.
+
+No browser or tool knows this certificate, so the startup output gives two ways to check you are talking to this server and not something in between:
+
+- **Browsers** show a warning. Open the certificate details from the warning page and compare its SHA-256 fingerprint with the one printed at startup before continuing.
+- **curl** examples include `-k --pinnedpubkey "sha256//…"`. `-k` skips the usual trust check, and `--pinnedpubkey` makes curl refuse any server whose key differs from this run's, so the pair is safe to use. Other clients need their certificate verification turned off, or the server run with `--no-tls` on a trusted network.
+
+**Your own certificate.** `--tls-cert cert.pem --tls-key key.pem` serves a certificate you already have, for example one from your own CA or from `mkcert`. Clients that trust it need no extra options, and the startup examples leave them out.
+
+**Plain HTTP.** `--no-tls` turns HTTPS off. Requests with a token then carry it in plain text, and the server logs a warning at startup when it listens beyond localhost. A plain `http://` request to an HTTPS server gets `400` with the message `Client sent an HTTP request to an HTTPS server.`
+
+## Web UI
+
+With `--web-ui`, opening the server's address in a browser shows a plain folder listing in the style of an Apache directory index. Click a folder to open it, a file to download it, and the column headings to sort. When the server runs with `--write`, a form under the listing uploads files into the current folder. Without `--web-ui`, `/` and the page's files under `/ui/` return `404`, and only the API is served.
+
+The startup output then includes a link to open:
+
+```
+Browse in a web browser:
+
+    https://127.0.0.1:8080/#token=WT2W6L7UHJP42G3KWPAQKZHNZB
+```
+
+The page is a static client of the JSON API and needs no token to load. It asks for the token when the API requires one:
+
+- The link printed at startup carries a generated token after `#`. Browsers never send that part to the server, and the page removes it from the address bar.
+- Otherwise the page asks for the token. It is kept in the tab's session storage until the tab is closed.
+
+A link cannot send the `Authorization` header, so with a token the page downloads each file into browser memory before saving it. For very large files, `curl` is the better tool. Without a token (`--no-auth`), downloads are ordinary links and stream straight to disk.
+
+The folder is part of the page address, for example `https://127.0.0.1:8080/?path=photos/2024`, so the back button, bookmarks and reloads work.
 
 ## Authentication
 
@@ -198,7 +252,7 @@ The token is never written to the logs. A token you supply is not printed either
 A web page open in your browser can send requests to any address your machine can reach, including `127.0.0.1`. A token stops that, because the page does not have it. Two more checks cover `--no-auth` servers:
 
 - **Cross-site requests.** Uploads that a browser marks as coming from another site (through the `Sec-Fetch-Site` or `Origin` header) are rejected with `403 cross_origin`. This applies with or without a token. curl and other non-browser clients send neither header and are not affected.
-- **Host names (only with `--no-auth`).** The `Host` header must be an IP address, `localhost`, or a name given with `--allow-host`. Anything else gets `403 host_not_allowed`. This stops DNS rebinding, where a site points its own domain at your server so the browser treats the server as part of that site. If you reach a `--no-auth` server by name, for example `http://nas.lan:8080`, start it with `--allow-host nas.lan`.
+- **Host names (only with `--no-auth`).** The `Host` header must be an IP address, `localhost`, or a name given with `--allow-host`. Anything else gets `403 host_not_allowed`. This stops DNS rebinding, where a site points its own domain at your server so the browser treats the server as part of that site. If you reach a `--no-auth` server by name, for example `https://nas.lan:8080`, start it with `--allow-host nas.lan`.
 
 `GET /healthz` never needs a token, so health checks work without it.
 
@@ -232,6 +286,8 @@ Beyond these checks, every file access goes through Go's `os.Root`, which blocks
 
 Runnable requests for every endpoint are in [`examples/`](examples). They use the `.http` format of the VS Code REST Client and the JetBrains HTTP Client.
 
+The curl examples below leave out TLS options. With the generated certificate, add the `-k --pinnedpubkey "sha256//…"` options printed at startup (see [HTTPS](#https)).
+
 All responses are JSON, except file downloads. Every response has an `X-Request-ID` header that matches the `req_id` in the server log.
 
 Timestamps are RFC 3339 in UTC. Sizes are in bytes.
@@ -241,7 +297,7 @@ Timestamps are RFC 3339 in UTC. Sizes are in bytes.
 Liveness check. No token required.
 
 ```bash
-curl "http://127.0.0.1:8080/healthz"
+curl "https://127.0.0.1:8080/healthz"
 ```
 
 ```json
@@ -253,7 +309,7 @@ curl "http://127.0.0.1:8080/healthz"
 Describes what the server allows, so clients can adapt, for example by hiding an upload button.
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/info"
+curl -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8080/api/info"
 ```
 
 ```json
@@ -285,7 +341,7 @@ Lists a folder.
 | `path` | Folder to list. Empty for the served folder. |
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/list?path=photos/2024"
+curl -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8080/api/list?path=photos/2024"
 ```
 
 ```json
@@ -331,10 +387,10 @@ Downloads a file as an attachment. `HEAD` is also supported.
 
 ```bash
 # Save under the server's file name
-curl -OJ -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/download?path=music/song.mp3"
+curl -OJ -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8080/api/download?path=music/song.mp3"
 
 # Resume an interrupted download
-curl -C - -o song.mp3 -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:8080/api/download?path=music/song.mp3"
+curl -C - -o song.mp3 -H "Authorization: Bearer $TOKEN" "https://127.0.0.1:8080/api/download?path=music/song.mp3"
 ```
 
 Response headers:
@@ -378,13 +434,13 @@ The body must be `multipart/form-data`:
 
 ```bash
 # One file
-curl -H "Authorization: Bearer $TOKEN" -F "file=@song.mp3" "http://127.0.0.1:8080/api/upload?path=music"
+curl -H "Authorization: Bearer $TOKEN" -F "file=@song.mp3" "https://127.0.0.1:8080/api/upload?path=music"
 
 # Several files, creating the folder
-curl -H "Authorization: Bearer $TOKEN" -F "file=@a.mp3" -F "file=@b.mp3" "http://127.0.0.1:8080/api/upload?path=music/new&mkdirs=true"
+curl -H "Authorization: Bearer $TOKEN" -F "file=@a.mp3" -F "file=@b.mp3" "https://127.0.0.1:8080/api/upload?path=music/new&mkdirs=true"
 
 # Replace an existing file (server started with --write --overwrite)
-curl -H "Authorization: Bearer $TOKEN" -F "file=@song.mp3" "http://127.0.0.1:8080/api/upload?path=music&overwrite=true"
+curl -H "Authorization: Bearer $TOKEN" -F "file=@song.mp3" "https://127.0.0.1:8080/api/upload?path=music&overwrite=true"
 ```
 
 From a browser page:
@@ -517,7 +573,25 @@ Filters check file **names**, not contents. A renamed file passes.
 
 ## Logging
 
-Logs go to **stderr** by default (`--log-file` to append to a file), in `text` or `json` format. The startup banner and token go to stdout, so they never mix with logs.
+Logs go to **stderr** by default (`--log-file` to append to a file). The startup banner and token go to stdout, so they never mix with logs. The banner ends with a divider, and logging starts after it.
+
+`--log-format` picks the format:
+
+- `pretty`: compact coloured lines for watching in a terminal. This is the default when stderr is a terminal.
+- `text`: `key=value` lines with every field. This is the default when logs are piped or go to `--log-file`.
+- `json`: one JSON object per line, for log collectors.
+
+In `pretty` format a request line shows the time, level, method, path, status, response size, upload size (when there is one), duration, client address and request ID, followed by `path`, `error_code` and `err` when present. The user agent is left out; use `text` or `json` to see it.
+
+```
+22:09:57 INF GET /api/list 200 248 B 0ms 127.0.0.1:53611 req=988b79c8ff0540b5
+22:09:57 INF POST /api/upload 201 230 B in=286.1 MiB 643ms 127.0.0.1:56304 req=41ed21c5de6bd047 path=in
+22:09:57 WRN GET /api/list 403 67 B 0ms 127.0.0.1:53612 req=19e6bbd4077698f2 path=../x error_code=path_escape err="path escapes root: \"../x\" contains .."
+```
+
+Colour marks levels and status codes (green 2xx, cyan 3xx, yellow 4xx, red 5xx). The banner is in colour on a terminal as well. Set `NO_COLOR=1` to turn colour off. Piped or redirected output never contains colour codes.
+
+The rest of this section describes the fields as they appear in `text` format.
 
 Every request produces one `request` line, at a level that depends on the status:
 
@@ -561,7 +635,8 @@ Logs are not rotated by the server. Use your platform's tools (journald/logrotat
 
 ## Security notes
 
-- **Bind address.** The default `127.0.0.1` only accepts this machine. `0.0.0.0` exposes the server to your network. There is no TLS, so the token travels in plain text. Beyond a trusted network, put the server behind a reverse proxy that terminates HTTPS.
+- **Bind address.** The default `127.0.0.1` only accepts this machine. `0.0.0.0` exposes the server to your network.
+- **TLS.** HTTPS is on by default, so the token and files are encrypted in transit. The generated certificate is only as trustworthy as your check of its fingerprint or pinned key; for anything long-running or shared, supply a certificate clients already trust. `--no-tls` sends everything in plain text, so keep it to localhost or a trusted network.
 - **Tokens.** Keep the default length (26 characters, about 130 bits) or longer for anything reachable from other machines. 8 characters is fine for local use only. Supply a fixed token through `REMOTE_EXPLORER_TOKEN` rather than `--token` so it does not appear in the process list.
 - **Symlinks.** Links are followed only if they stay inside the served folder **and** use a relative target. All other links are hidden and unreachable. The extension filter applies to every name along a chain of links, so `song.mp3 -> notes.txt` is hidden when `txt` is not allowed. Hard links cannot be detected, so a hard link named `x.mp3` serves whatever file it points to.
 - **Hidden files** get the same `404 not_found` as missing ones from every endpoint, including when they are used as a folder (`hidden.txt/x`), so clients cannot tell they exist.

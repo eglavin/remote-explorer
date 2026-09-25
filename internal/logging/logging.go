@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+
+	"remote-explorer/internal/term"
 )
 
 // New returns a logger writing to stderr, or appending to file when it is set.
@@ -23,10 +25,22 @@ func New(format string, level slog.Level, file string) (*slog.Logger, func() err
 	return slog.New(NewHandler(w, format, level)), closeFn, nil
 }
 
+// NewHandler returns a handler for format: "pretty", "text", "json", or
+// "auto", which picks pretty for a terminal and text for pipes and files,
+// where logs are more likely to be read by tools.
 func NewHandler(w io.Writer, format string, level slog.Level) slog.Handler {
+	if format == "auto" {
+		format = "text"
+		if term.IsTerminal(w) {
+			format = "pretty"
+		}
+	}
 	opts := &slog.HandlerOptions{Level: level}
-	if format == "json" {
+	switch format {
+	case "json":
 		return slog.NewJSONHandler(w, opts)
+	case "pretty":
+		return newPrettyHandler(w, level, term.Color(w))
 	}
 	return slog.NewTextHandler(w, opts)
 }

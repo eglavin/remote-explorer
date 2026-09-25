@@ -25,9 +25,9 @@ func TestParseDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.MaxUpload != 0 ||
-		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth ||
-		c.LogFormat != "text" || c.LogLevel != slog.LevelInfo {
+	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.WebUI || c.MaxUpload != 0 ||
+		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth || c.NoTLS || c.TLSCert != "" ||
+		c.LogFormat != "auto" || c.LogLevel != slog.LevelInfo {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 }
@@ -99,6 +99,26 @@ func TestParseNoAuth(t *testing.T) {
 	}
 	if _, err := parse(t, "--no-auth", "--token=x", dir); err == nil {
 		t.Error("--no-auth with --token: want error")
+	}
+}
+
+func TestParseTLS(t *testing.T) {
+	dir := t.TempDir()
+	c, err := parse(t, "--tls-cert=c.pem", "--tls-key=k.pem", dir)
+	if err != nil || c.NoTLS || c.TLSCert != "c.pem" || c.TLSKey != "k.pem" {
+		t.Errorf("--tls-cert/--tls-key: %v, %+v", err, c)
+	}
+	if c, err := parse(t, "--no-tls", dir); err != nil || !c.NoTLS {
+		t.Errorf("--no-tls: %v, %+v", err, c)
+	}
+	for _, args := range [][]string{
+		{"--tls-cert=c.pem"},
+		{"--tls-key=k.pem"},
+		{"--no-tls", "--tls-cert=c.pem", "--tls-key=k.pem"},
+	} {
+		if _, err := parse(t, append(args, dir)...); err == nil {
+			t.Errorf("Parse(%q) succeeded, want error", args)
+		}
 	}
 }
 
@@ -187,6 +207,11 @@ func TestParseLogging(t *testing.T) {
 	c, err := parse(t, "--log-format=json", "--log-level=warn", dir)
 	if err != nil || c.LogFormat != "json" || c.LogLevel != slog.LevelWarn {
 		t.Errorf("got %+v, %v", c, err)
+	}
+	for _, format := range []string{"auto", "pretty", "text"} {
+		if c, err := parse(t, "--log-format="+format, dir); err != nil || c.LogFormat != format {
+			t.Errorf("--log-format=%s: %+v, %v", format, c, err)
+		}
 	}
 	for _, arg := range []string{"--log-format=xml", "--log-level=loud"} {
 		if _, err := parse(t, arg, dir); err == nil {

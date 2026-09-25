@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,7 @@ type Config struct {
 	Addr       string
 	Write      bool
 	Overwrite  bool
+	WebUI      bool
 	MaxUpload  int64
 	MaxFiles   int
 	VisibleExt extfilter.Set
@@ -48,9 +50,14 @@ type Config struct {
 	// AllowedHosts are extra Host header names accepted with --no-auth.
 	AllowedHosts []string
 	TrustProxy   bool
-	LogFormat    string
-	LogLevel     slog.Level
-	LogFile      string
+	// NoTLS serves plain HTTP. Otherwise TLSCert and TLSKey name the
+	// certificate files, or are empty for a self-signed certificate.
+	NoTLS     bool
+	TLSCert   string
+	TLSKey    string
+	LogFormat string
+	LogLevel  slog.Level
+	LogFile   string
 	// ShowVersion is set by --version. No other fields are filled in then.
 	ShowVersion bool
 }
@@ -62,7 +69,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.Usage = func() {
 		fmt.Fprintln(output, "Usage: remote-explorer [flags] <folder>")
 		fmt.Fprintln(output)
-		fmt.Fprintln(output, "Serves <folder> over HTTP as a JSON API. Read-only unless --write is given.")
+		fmt.Fprintln(output, "Serves <folder> over HTTPS as a JSON API. Read-only unless --write is given.")
 		fmt.Fprintln(output)
 		fs.PrintDefaults()
 	}
@@ -79,6 +86,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.BoolVar(&c.Overwrite, "overwrite", false, "let uploads replace existing files (needs --write)")
 	fs.StringVar(&maxUpload, "max-upload", "1GiB", "maximum size of one upload request, e.g. 500MB or 2GiB (needs --write)")
 	fs.IntVar(&maxFiles, "max-files", DefaultMaxFiles, "maximum number of files in one upload request (needs --write)")
+	fs.BoolVar(&c.WebUI, "web-ui", false, "serve a folder listing page for web browsers at /")
 	fs.StringVar(&allowExt, "allow-ext", "", "comma-separated extensions that are listed, downloadable and uploadable, e.g. zip,mp4,mp3 (default all)")
 	fs.StringVar(&uploadExt, "allow-upload-ext", "", "comma-separated extensions that can be uploaded; must be within --allow-ext (needs --write)")
 	fs.StringVar(&c.Token, "token", "", "bearer token required on /api requests (or set "+TokenEnv+"); a random one is generated and printed if not given")
@@ -86,8 +94,11 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 		fmt.Sprintf("length of the generated token, %d to %d characters", MinTokenLength, MaxTokenLength))
 	fs.BoolVar(&c.NoAuth, "no-auth", false, "do not require a token; anyone who can reach the server can use the API")
 	fs.StringVar(&allowHost, "allow-host", "", "comma-separated host names clients may use to reach a --no-auth server, besides IP addresses and localhost")
+	fs.BoolVar(&c.NoTLS, "no-tls", false, "serve plain HTTP instead of HTTPS; the token and files travel unencrypted")
+	fs.StringVar(&c.TLSCert, "tls-cert", "", "PEM certificate file to serve (needs --tls-key); a self-signed one is generated if not given")
+	fs.StringVar(&c.TLSKey, "tls-key", "", "PEM private key file for --tls-cert")
 	fs.BoolVar(&c.TrustProxy, "trust-proxy", false, "log the client address from X-Forwarded-For (only behind a proxy you control)")
-	fs.StringVar(&c.LogFormat, "log-format", "text", "log format: text or json")
+	fs.StringVar(&c.LogFormat, "log-format", "auto", "log format: pretty, text, json, or auto for pretty on a terminal and text otherwise")
 	fs.StringVar(&level, "log-level", "info", "minimum log level: debug, info, warn or error")
 	fs.StringVar(&c.LogFile, "log-file", "", "append logs to this file instead of stderr")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print the version and exit")
@@ -186,8 +197,14 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 			return nil, fmt.Errorf("--allow-host: %w", err)
 		}
 	}
-	if c.LogFormat != "text" && c.LogFormat != "json" {
-		return nil, fmt.Errorf("--log-format must be text or json, got %q", c.LogFormat)
+	switch {
+	case c.NoTLS && (c.TLSCert != "" || c.TLSKey != ""):
+		return nil, errors.New("--tls-cert and --tls-key have no effect with --no-tls")
+	case (c.TLSCert == "") != (c.TLSKey == ""):
+		return nil, errors.New("--tls-cert and --tls-key must be given together")
+	}
+	if !slices.Contains([]string{"auto", "pretty", "text", "json"}, c.LogFormat) {
+		return nil, fmt.Errorf("--log-format must be auto, pretty, text or json, got %q", c.LogFormat)
 	}
 	if err := c.LogLevel.UnmarshalText([]byte(level)); err != nil {
 		return nil, fmt.Errorf("--log-level: %w", err)
