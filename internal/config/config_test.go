@@ -26,7 +26,7 @@ func TestParseDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.WebUI || c.MaxUpload != 0 ||
-		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth ||
+		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth || c.NoTLS || c.TLSCert != "" ||
 		c.LogFormat != "text" || c.LogLevel != slog.LevelInfo {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
@@ -99,6 +99,26 @@ func TestParseNoAuth(t *testing.T) {
 	}
 	if _, err := parse(t, "--no-auth", "--token=x", dir); err == nil {
 		t.Error("--no-auth with --token: want error")
+	}
+}
+
+func TestParseTLS(t *testing.T) {
+	dir := t.TempDir()
+	c, err := parse(t, "--tls-cert=c.pem", "--tls-key=k.pem", dir)
+	if err != nil || c.NoTLS || c.TLSCert != "c.pem" || c.TLSKey != "k.pem" {
+		t.Errorf("--tls-cert/--tls-key: %v, %+v", err, c)
+	}
+	if c, err := parse(t, "--no-tls", dir); err != nil || !c.NoTLS {
+		t.Errorf("--no-tls: %v, %+v", err, c)
+	}
+	for _, args := range [][]string{
+		{"--tls-cert=c.pem"},
+		{"--tls-key=k.pem"},
+		{"--no-tls", "--tls-cert=c.pem", "--tls-key=k.pem"},
+	} {
+		if _, err := parse(t, append(args, dir)...); err == nil {
+			t.Errorf("Parse(%q) succeeded, want error", args)
+		}
 	}
 }
 

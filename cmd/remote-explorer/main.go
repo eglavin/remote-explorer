@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +23,7 @@ import (
 	"remote-explorer/internal/fsvc"
 	"remote-explorer/internal/httpapi"
 	"remote-explorer/internal/logging"
+	"remote-explorer/internal/tlscert"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -121,23 +124,43 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var tlsConfig *tls.Config
+	var selfSigned *x509.Certificate
+	if !cfg.NoTLS {
+		cert, err := loadCertificate(cfg, ln.Addr())
+		if err != nil {
+			ln.Close()
+			return err
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		if cfg.TLSCert == "" {
+			selfSigned = cert.Leaf
+		}
+	}
 	srv := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// No overall read/write timeouts: they would cut off large uploads and downloads.
 		IdleTimeout: 2 * time.Minute,
 		ErrorLog:    slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
+		TLSConfig:   tlsConfig,
 	}
 	logStartup(logger, cfg, ln.Addr())
 	if cfg.Write {
 		go removeStaleTempFiles(logger, svc)
 	}
-	printAccess(os.Stdout, cfg, ln.Addr())
+	printAccess(os.Stdout, cfg, ln.Addr(), selfSigned)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(ln) }()
+	go func() {
+		if cfg.NoTLS {
+			serveErr <- srv.Serve(ln)
+		} else {
+			serveErr <- srv.ServeTLS(ln, "", "")
+		}
+	}()
 
 	select {
 	case err := <-serveErr:
@@ -154,6 +177,28 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 	}
 	logger.Info("stopped")
 	return nil
+}
+
+// loadCertificate reads --tls-cert and --tls-key, or creates a self-signed
+// certificate for the addresses clients may use to reach addr.
+func loadCertificate(cfg *config.Config, addr net.Addr) (tls.Certificate, error) {
+	if cfg.TLSCert != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("--tls-cert/--tls-key: %w", err)
+		}
+		return cert, nil
+	}
+	var ip net.IP
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		ip = tcp.IP
+	}
+	names, ips := tlscert.Names(ip, cfg.AllowedHosts)
+	cert, err := tlscert.SelfSigned(names, ips, time.Now())
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create self-signed certificate: %w", err)
+	}
+	return cert, nil
 }
 
 // staleTempAge is well beyond DefaultUploadIdleTimeout, so any temporary
@@ -180,6 +225,7 @@ func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 		"visible_ext", cfg.VisibleExt.String(),
 		"auth", !cfg.NoAuth,
 		"web_ui", cfg.WebUI,
+		"tls", tlsMode(cfg),
 	}
 	if cfg.Write {
 		attrs = append(attrs,
@@ -204,18 +250,46 @@ func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 	case !loopback:
 		logger.Warn("listening beyond localhost")
 	}
+	if cfg.NoTLS && !loopback {
+		logger.Warn("TLS disabled with --no-tls while listening beyond localhost: tokens and files travel unencrypted")
+	}
+}
+
+func tlsMode(cfg *config.Config) string {
+	switch {
+	case cfg.NoTLS:
+		return "off"
+	case cfg.TLSCert != "":
+		return "certificate file"
+	default:
+		return "self-signed"
+	}
 }
 
 // printAccess tells the user how to authenticate and how to call each
 // endpoint. It writes to stdout rather than the logger so the token never
-// ends up in log files or collectors.
-func printAccess(w io.Writer, cfg *config.Config, addr net.Addr) {
-	base := "http://" + browsableAddr(addr)
+// ends up in log files or collectors. selfSigned is the generated
+// certificate, or nil when TLS is off or the certificate was supplied.
+func printAccess(w io.Writer, cfg *config.Config, addr net.Addr, selfSigned *x509.Certificate) {
+	base := "https://" + browsableAddr(addr)
+	if cfg.NoTLS {
+		base = "http://" + browsableAddr(addr)
+	}
 	mode := "read-only"
 	if cfg.Write {
 		mode = "read-write"
 	}
 	fmt.Fprintf(w, "Serving %s at %s (%s)\n\n", cfg.Root, base, mode)
+
+	// Browsers cannot know a new certificate, so they warn about it; the
+	// fingerprint lets the user check it is this server's before going on.
+	var curlTLS string
+	if selfSigned != nil {
+		fmt.Fprintf(w, "Self-signed certificate (new each run; set --tls-cert and --tls-key to use your own).\n"+
+			"Browsers will warn about it. Continue only if its SHA-256 fingerprint is:\n\n    %s\n\n",
+			tlscert.Fingerprint(selfSigned))
+		curlTLS = `-k --pinnedpubkey "` + tlscert.PublicKeyPin(selfSigned) + `" `
+	}
 
 	// A supplied token is the user's secret and stays out of the output;
 	// a generated one must be shown or nobody could use the server.
@@ -241,7 +315,7 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr) {
 	}
 
 	example := func(title, flags, endpoint string) {
-		fmt.Fprintf(w, "  %s\n    curl %s%s\"%s%s\"\n\n", title, auth, flags, base, endpoint)
+		fmt.Fprintf(w, "  %s\n    curl %s%s%s\"%s%s\"\n\n", title, curlTLS, auth, flags, base, endpoint)
 	}
 	fmt.Fprintf(w, "Examples:\n\n")
 	example("Server info and limits:", "", "/api/info")

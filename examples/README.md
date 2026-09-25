@@ -23,7 +23,9 @@ Ready-to-run requests for every endpoint, in the `.http` format understood by:
 
 2. Copy the printed access token into the `@token` line at the top of each file. If you run the server with `--no-auth`, any value works.
 
-3. If the server is not on `http://127.0.0.1:8080`, change `@baseUrl` too.
+3. If the server is not on `https://127.0.0.1:8080`, change `@baseUrl` too.
+
+4. The server's self-signed certificate is new on every run and no client trusts it. If your client rejects it, turn off certificate verification for this server in the client's settings, or start the server with `--no-tls` and change `@baseUrl` to `http://`.
 
 The files are numbered in a sensible order. `02-upload.http` creates `examples-demo/hello.txt` in the served folder, which the list and download examples then use. Each file notes the status it expects.
 
