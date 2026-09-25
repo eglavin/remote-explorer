@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Set here as well as in the stylesheet so a dark page never flashes white while it loads. -->
+    <meta name="color-scheme" content="light dark" />
+    <title>Index of /</title>
+    <link rel="stylesheet" href="/ui/style.css" />
+    <script src="/ui/app.js" defer></script>
+  </head>
+  <body>
+    <h1 id="heading">Index of /</h1>
+
+    <form id="login" hidden>
+      <p>This server requires an access token. It was printed when the server started.</p>
+      <p>
+        <label>Token: <input id="token" type="password" autocomplete="off" size="30" /></label>
+        <button type="submit">Log in</button>
+      </p>
+    </form>
+
+    <p id="error" hidden></p>
+
+    <table id="listing" hidden>
+      <thead>
+        <tr>
+          <th><img src="/ui/icons/blank.svg" alt="[ICO]" /></th>
+          <th><a href="#" data-sort="name">Name</a></th>
+          <th><a href="#" data-sort="modified">Last modified</a></th>
+          <th><a href="#" data-sort="size">Size</a></th>
+        </tr>
+        <tr>
+          <th colspan="4">
+            <hr />
+          </th>
+        </tr>
+      </thead>
+      <tbody id="entries"></tbody>
+      <tfoot>
+        <tr>
+          <th colspan="4">
+            <hr />
+          </th>
+        </tr>
+      </tfoot>
+    </table>
+
+    <form id="upload" hidden>
+      <p>
+        <input id="files" type="file" multiple />
+        <label id="overwrite-label" hidden>
+          <input id="overwrite" type="checkbox" /> Replace existing files
+        </label>
+        <button type="submit">Upload</button>
+        <span id="upload-status"></span>
+      </p>
+    </form>
+
+    <address id="address"></address>
+  </body>
+</html>

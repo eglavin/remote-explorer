@@ -15,6 +15,7 @@ Runs on Windows, macOS and Linux with no dependencies beyond the Go standard lib
 - [Quick start](#quick-start)
 - [Building](#building)
 - [Command-line flags](#command-line-flags)
+- [Web UI](#web-ui)
 - [Authentication](#authentication)
 - [Paths](#paths)
 - [API reference](#api-reference)
@@ -55,6 +56,12 @@ To allow uploads:
 
 ```bash
 ./remote-explorer --write ~/Music
+```
+
+To browse the folder in a web browser as well, add `--web-ui`. The server then also prints a link to open (see [Web UI](#web-ui)):
+
+```bash
+./remote-explorer --web-ui ~/Music
 ```
 
 To accept connections from other machines, listen on all interfaces:
@@ -155,6 +162,7 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 | `--overwrite` | off | Allow uploads to replace existing files when the request asks for it. Needs `--write`. |
 | `--max-upload` | `1GiB` | Maximum size of one upload request. Accepts `B`, `KB`/`MB`/`GB`/`TB` (powers of 1000) and `KiB`/`MiB`/`GiB`/`TiB` (powers of 1024). Needs `--write`. |
 | `--max-files` | `1000` | Maximum number of files in one upload request. Needs `--write`. |
+| `--web-ui` | off | Serve a folder listing page for web browsers at `/`. See [Web UI](#web-ui). |
 | `--allow-ext` | all | Comma-separated extensions that are listed, downloadable **and** uploadable, e.g. `zip,mp4,mp3`. See [Extension filters](#extension-filters). |
 | `--allow-upload-ext` | same as `--allow-ext` | Comma-separated extensions that can be uploaded. Must be within `--allow-ext`. Needs `--write`. |
 | `--token` | generated | Bearer token required on `/api` requests. At least 8 characters. |
@@ -174,6 +182,27 @@ The folder can be given as the only argument or with `--root`. Go accepts both `
 Invalid combinations stop the server at startup with an explanation, for example `--overwrite` without `--write`, `--no-auth` with `--token`, or an upload extension outside `--allow-ext`.
 
 Exit codes: `0` on clean shutdown, `1` on a runtime error, `2` on invalid flags.
+
+## Web UI
+
+With `--web-ui`, opening the server's address in a browser shows a plain folder listing in the style of an Apache directory index. Click a folder to open it, a file to download it, and the column headings to sort. When the server runs with `--write`, a form under the listing uploads files into the current folder. Without `--web-ui`, `/` and the page's files under `/ui/` return `404`, and only the API is served.
+
+The startup output then includes a link to open:
+
+```
+Browse in a web browser:
+
+    http://127.0.0.1:8080/#token=WT2W6L7UHJP42G3KWPAQKZHNZB
+```
+
+The page is a static client of the JSON API and needs no token to load. It asks for the token when the API requires one:
+
+- The link printed at startup carries a generated token after `#`. Browsers never send that part to the server, and the page removes it from the address bar.
+- Otherwise the page asks for the token. It is kept in the tab's session storage until the tab is closed.
+
+A link cannot send the `Authorization` header, so with a token the page downloads each file into browser memory before saving it. For very large files, `curl` is the better tool. Without a token (`--no-auth`), downloads are ordinary links and stream straight to disk.
+
+The folder is part of the page address, for example `http://127.0.0.1:8080/?path=photos/2024`, so the back button, bookmarks and reloads work.
 
 ## Authentication
 

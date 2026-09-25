@@ -1,0 +1,58 @@
+/* Browser defaults do most of the work; this only restores Apache's table spacing. */
+:root {
+  color-scheme: light dark;
+}
+
+td,
+th {
+  padding: 0 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th hr {
+  margin: 2px 0;
+}
+
+td.size {
+  text-align: right;
+}
+
+td.modified {
+  white-space: nowrap;
+}
+
+img {
+  width: 20px;
+  height: 22px;
+}
+
+#error {
+  color: #a00;
+}
+
+/* Browsers' default dark link colours vary and some are hard to read, so
+   set light versions of the classic blue and purple. */
+@media (prefers-color-scheme: dark) {
+  body {
+    background: #121212;
+    color: #ddd;
+  }
+
+  a:link {
+    color: #8ab4f8;
+  }
+
+  a:visited {
+    color: #c58af9;
+  }
+
+  #error {
+    color: #f28b82;
+  }
+
+  /* The icons are drawn with black outlines. */
+  img {
+    filter: invert(1) hue-rotate(180deg);
+  }
+}

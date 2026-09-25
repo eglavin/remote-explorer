@@ -36,6 +36,7 @@ type Config struct {
 	Addr       string
 	Write      bool
 	Overwrite  bool
+	WebUI      bool
 	MaxUpload  int64
 	MaxFiles   int
 	VisibleExt extfilter.Set
@@ -79,6 +80,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.BoolVar(&c.Overwrite, "overwrite", false, "let uploads replace existing files (needs --write)")
 	fs.StringVar(&maxUpload, "max-upload", "1GiB", "maximum size of one upload request, e.g. 500MB or 2GiB (needs --write)")
 	fs.IntVar(&maxFiles, "max-files", DefaultMaxFiles, "maximum number of files in one upload request (needs --write)")
+	fs.BoolVar(&c.WebUI, "web-ui", false, "serve a folder listing page for web browsers at /")
 	fs.StringVar(&allowExt, "allow-ext", "", "comma-separated extensions that are listed, downloadable and uploadable, e.g. zip,mp4,mp3 (default all)")
 	fs.StringVar(&uploadExt, "allow-upload-ext", "", "comma-separated extensions that can be uploaded; must be within --allow-ext (needs --write)")
 	fs.StringVar(&c.Token, "token", "", "bearer token required on /api requests (or set "+TokenEnv+"); a random one is generated and printed if not given")

@@ -30,6 +30,7 @@ type testConfig struct {
 	info            Info
 	allowedHosts    []string
 	uploadIdle      time.Duration
+	webUI           bool
 }
 
 // newTestServer serves a tree of {a.mp3, b.txt, sub/c.mp3} read-only with no extension filter.
@@ -74,6 +75,7 @@ func newConfiguredTestServer(t *testing.T, cfg testConfig) *testServer {
 		// httptest.NewRequest sends "Host: example.com".
 		AllowedHosts:      append([]string{"example.com"}, cfg.allowedHosts...),
 		UploadIdleTimeout: cfg.uploadIdle,
+		WebUI:             cfg.webUI,
 	})
 	return &testServer{handler: h, logs: logs, dir: dir}
 }

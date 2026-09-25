@@ -44,6 +44,28 @@ func TestPrintAccessSuppliedTokenIsHidden(t *testing.T) {
 	}
 }
 
+func TestPrintAccessWebUI(t *testing.T) {
+	if out := accessOutput(config.Config{Token: "GENERATEDTOKEN", TokenGenerated: true}); strings.Contains(out, "web browser") {
+		t.Errorf("browser link shown without --web-ui:\n%s", out)
+	}
+	for _, tc := range []struct {
+		cfg  config.Config
+		want string
+	}{
+		{config.Config{WebUI: true, Token: "GENERATEDTOKEN", TokenGenerated: true}, "    http://127.0.0.1:8080/#token=GENERATEDTOKEN\n"},
+		{config.Config{WebUI: true, Token: "my-own-secret"}, "    http://127.0.0.1:8080/\n"},
+		{config.Config{WebUI: true, NoAuth: true}, "    http://127.0.0.1:8080/\n"},
+	} {
+		out := accessOutput(tc.cfg)
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%+v: output missing %q:\n%s", tc.cfg, tc.want, out)
+		}
+		if strings.Contains(out, "my-own-secret") {
+			t.Errorf("supplied token printed:\n%s", out)
+		}
+	}
+}
+
 func TestPrintAccessWrite(t *testing.T) {
 	out := accessOutput(config.Config{NoAuth: true, Write: true})
 	want := `curl -F "file=@local-file.txt" "http://127.0.0.1:8080/api/upload?path=some/folder"`

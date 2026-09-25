@@ -113,6 +113,7 @@ func serve(cfg *config.Config, logger *slog.Logger) error {
 		},
 		Token:        cfg.Token,
 		TrustProxy:   cfg.TrustProxy,
+		WebUI:        cfg.WebUI,
 		AllowedHosts: cfg.AllowedHosts,
 	})
 
@@ -178,6 +179,7 @@ func logStartup(logger *slog.Logger, cfg *config.Config, addr net.Addr) {
 		"root", cfg.Root,
 		"visible_ext", cfg.VisibleExt.String(),
 		"auth", !cfg.NoAuth,
+		"web_ui", cfg.WebUI,
 	}
 	if cfg.Write {
 		attrs = append(attrs,
@@ -227,6 +229,15 @@ func printAccess(w io.Writer, cfg *config.Config, addr net.Addr) {
 	default:
 		fmt.Fprintf(w, "Using the token from --token or %s.\n\n", config.TokenEnv)
 		auth = `-H "Authorization: Bearer <token>" `
+	}
+
+	// Generated tokens use only A-Z and 2-7, so they need no escaping in the URL.
+	if cfg.WebUI {
+		browserURL := base + "/"
+		if cfg.TokenGenerated {
+			browserURL += "#token=" + cfg.Token
+		}
+		fmt.Fprintf(w, "Browse in a web browser:\n\n    %s\n\n", browserURL)
 	}
 
 	example := func(title, flags, endpoint string) {

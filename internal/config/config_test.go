@@ -25,7 +25,7 @@ func TestParseDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.MaxUpload != 0 ||
+	if c.Root != dir || c.Addr != "127.0.0.1:8080" || c.Write || c.WebUI || c.MaxUpload != 0 ||
 		c.VisibleExt != nil || c.UploadExt != nil || c.NoAuth ||
 		c.LogFormat != "text" || c.LogLevel != slog.LevelInfo {
 		t.Errorf("unexpected defaults: %+v", c)
